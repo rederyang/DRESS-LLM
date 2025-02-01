@@ -1,7 +1,6 @@
 # DRESS-LLM
 Code and Benchmark Dataset for ICLR'25 paper DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing.
 
----
 
 **Paper Link** 🔗: https://arxiv.org/abs/2501.14371 (arXiv)
 
