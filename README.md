@@ -1,21 +1,10 @@
 # DRESS-LLM
-Code and Benchmark Dataset for ICLR'25 paper DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing.
+Code and Benchmark Dataset for paper DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing.
 
+**[Update 25/2/2] 🔥 Our work has been accepted to ICLR'25!**
 
 **Paper Link** 🔗: https://arxiv.org/abs/2501.14371 (arXiv)
 
-If you find our work helpful or interesting, please don't forget to cite us!
-
-```
-@misc{ma2025dressingllm,
-      title={DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing}, 
-      author={Xinyu Ma and Yifeng Xu and Yang Lin and Tianlong Wang and Xu Chu and Xin Gao and Junfeng Zhao and Yasha Wang},
-      year={2025},
-      eprint={2501.14371},
-      archivePrefix={arXiv},
-      url={https://arxiv.org/abs/2501.14371}, 
-}
-```
 
 ## Table of Contents
 1. [Installation](#installation)
@@ -48,3 +37,18 @@ For more information about the dataset, please refer to the paper.
 
 (3) Run `python generate.py "edited_model/Qwen1.5-14B-Chat_dataset_DRC_seed_42_top_64_heads_alpha_3.0"` to perform inference on the test set and generate answers to all questions. Only the model path in (2) needs to be provided here. The reasoning adopts the [DRESSing UP LLM] strategy, adaptively adjusting the steering intensity in the style subspace to achieve higher generation quality.
 Results will be saved in `result.json`.
+
+---
+
+**Finally, if you find our work helpful or interesting, please don't forget to cite us!**
+
+```
+@misc{ma2025dressingllm,
+      title={DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing}, 
+      author={Xinyu Ma and Yifeng Xu and Yang Lin and Tianlong Wang and Xu Chu and Xin Gao and Junfeng Zhao and Yasha Wang},
+      year={2025},
+      eprint={2501.14371},
+      archivePrefix={arXiv},
+      url={https://arxiv.org/abs/2501.14371}, 
+}
+```
