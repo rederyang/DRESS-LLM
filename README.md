@@ -3,7 +3,7 @@ Code and Benchmark Dataset for paper DRESSing Up LLM: Efficient Stylized Questio
 
 **[Update 25/2/2] 🔥 Our work has been accepted to ICLR'25!**
 
-**Paper Link** 🔗: https://arxiv.org/abs/2501.14371 (arXiv)
+**Paper Link** 🔗: https://openreview.net/forum?id=mNVR9jJYqK (ICLR'25) / https://arxiv.org/abs/2501.14371 (arXiv) 
 
 
 ## Table of Contents
@@ -42,6 +42,18 @@ Results will be saved in `result.json`.
 
 **Finally, if you find our work helpful or interesting, please don't forget to cite us!**
 
+ICLR Version
+```
+@inproceedings{
+ma2025dressing,
+title={{DRESS}ing Up {LLM}: Efficient Stylized Question-Answering via Style Subspace Editing},
+author={Xinyu Ma and Yifeng Xu and Yang Lin and Tianlong Wang and Xu Chu and Xin Gao and Junfeng Zhao and Yasha Wang},
+booktitle={The Thirteenth International Conference on Learning Representations},
+year={2025},
+url={https://openreview.net/forum?id=mNVR9jJYqK}
+}
+```
+arXiv Version
 ```
 @misc{ma2025dressingllm,
       title={DRESSing Up LLM: Efficient Stylized Question-Answering via Style Subspace Editing}, 
