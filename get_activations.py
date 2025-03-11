@@ -62,6 +62,8 @@ def main():
 
         gc.collect()
 
+    os.makedirs(f'features', exist_ok=True)
+
     print("Saving labels")
     np.save(f'features/{args.model_name}_{args.dataset_name}_labels.npy', labels)
 
