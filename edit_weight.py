@@ -1,4 +1,4 @@
-# python edit_weight.py --model_name Qwen1.5-14B-Chat --dataset_name DRC --activation_path "" --label_path "" --model_dir "/data/CharacterAI/PretainedModels/Qwen1.5-14B-Chat" --num_heads 64 --alpha 3
+# python edit_weight.py --model_name Qwen1.5-14B-Chat --dataset_name DRC --activation_path "" --label_path "" --model_dir "/data/CharacterAI/PretainedModels/Qwen1.5-14B-Chat" --num_heads 64 --alpha 3 --save_dir "path/to/save/dir"
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--activation_path", type=str, default=None, help='activation path')
     parser.add_argument("--label_path", type=str, default=None, help='label path')
     parser.add_argument("--model_dir", type=str, default=None, help='local directory with model data')
+    parser.add_argument("--save_dir", type=str, default="edited_model", help='directory to save the edited model')
     # 以上为必需参数
     parser.add_argument('--num_heads', type=int, default=96, help='K, number of top heads to intervene on')
     parser.add_argument('--alpha', type=float, default=5, help='alpha, intervention strength')
@@ -110,7 +111,7 @@ def main():
         pickle.dump(activations_dict, f)
 
     print("save results")
-    save_folder = f"edited_model/{args.model_name}_dataset_{args.dataset_name}_seed_{args.seed}_top_{args.num_heads}_heads_alpha_{args.alpha:.1f}"
+    save_folder = f"{args.save_dir}/{args.model_name}_dataset_{args.dataset_name}_seed_{args.seed}_top_{args.num_heads}_heads_alpha_{args.alpha:.1f}"
     if os.path.exists(save_folder):
       shutil.rmtree(save_folder)
     os.makedirs(save_folder)
