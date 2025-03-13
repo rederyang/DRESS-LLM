@@ -1,0 +1,77 @@
+ # Python
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+*.ipy
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+.python-version
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.spyderproject
+.spyproject
+.ropeproject
+
+# 项目特定
+edited_model/
+features/
+*.npy
+*.pkl
+*.pt
+*.pth
+*.bin
+*.h5
+*.ckpt
+*.model
+*.onnx
+*.tflite
+*.pb
+*.savedmodel
+logs/
+checkpoints/
+wandb/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+.directory
+desktop.ini
+
+# 日志文件
+*.log
+*.out
