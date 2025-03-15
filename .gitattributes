@@ -1,1 +1,2 @@
+/PretrainedModels/* filter=lfs diff=lfs merge=lfs -text
 PretrainedModels/** filter=lfs diff=lfs merge=lfs -text
