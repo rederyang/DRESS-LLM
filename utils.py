@@ -730,7 +730,194 @@ def get_top_heads(train_idxs, val_idxs, separated_activations, separated_labels,
         # overwrite top heads with random heads, no replacement
         random_idxs = np.random.choice(num_heads*num_layers, num_heads*num_layers, replace=False)
         top_heads = [flattened_idx_to_layer_head(idx, num_heads) for idx in random_idxs[:num_to_intervene]]
+    
+    if not use_random_dir:
+        print("Selected heads performance:")
+        all_X_val = np.concatenate([separated_activations[i] for i in val_idxs], axis=0)
+        y_val = np.concatenate([separated_labels[i] for i in val_idxs], axis=0)
+        
+        for layer, head in top_heads:
+            X_val_head = all_X_val[:, layer, head, :]
+            probe_idx = layer_head_to_flattened_idx(layer, head, num_heads)
+            val_acc = accuracy_score(y_val, probes[probe_idx].predict(X_val_head))
+            print(f"Layer {layer}, Head {head}: Validation accuracy = {val_acc:.4f}")
 
+    return top_heads, probes
+
+def get_top_heads_group_lasso(train_idxs, val_idxs, separated_activations, separated_labels, num_layers, num_heads, seed, num_to_intervene, use_random_dir=False, l0_layer=0, ln_layer=40, svd_components=64, l1_reg=0.0, group_reg=0.05):
+    """
+    使用Group Lasso正则化选择协作的注意力头
+    
+    参数:
+    - train_idxs: 训练集索引
+    - val_idxs: 验证集索引
+    - separated_activations: 分离的激活值
+    - separated_labels: 分离的标签
+    - num_layers: 模型层数
+    - num_heads: 每层的注意力头数
+    - seed: 随机种子
+    - num_to_intervene: 要选择的头部数量
+    - use_random_dir: 是否使用随机方向
+    - l0_layer: 开始考虑的层（排除前几层）
+    - ln_layer: 结束考虑的层（排除后几层）
+    - svd_components: SVD降维的组件数
+    - group_reg: Group Lasso正则化强度
+    
+    返回:
+    - top_heads: 选择的头部列表，格式为[(layer, head), ...]
+    - probes: 训练好的探针列表
+    """
+    import torch
+    import numpy as np
+    from sklearn.preprocessing import StandardScaler
+    from scipy import linalg
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score
+    from group_lasso import LogisticGroupLasso
+    LogisticGroupLasso.LOG_LOSSES = True
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    # 准备数据
+    all_X_train = np.concatenate([separated_activations[i] for i in train_idxs], axis=0)
+    all_X_val = np.concatenate([separated_activations[i] for i in val_idxs], axis=0)
+    y_train = np.concatenate([separated_labels[i] for i in train_idxs], axis=0)
+    y_val = np.concatenate([separated_labels[i] for i in val_idxs], axis=0)
+    
+    # 对每个头部应用SVD降维
+    reduced_features = {}
+    svd_models = {}
+    
+    for layer in range(l0_layer, ln_layer):
+        for head in range(num_heads):
+            # 获取该头部的激活值
+            X_train_head = all_X_train[:, layer, head, :]
+            
+            # 使用scipy的SVD降维
+            n_components = min(svd_components, min(X_train_head.shape) - 1)
+            U, s, Vt = linalg.svd(X_train_head, full_matrices=False)
+            
+            # 截取前n_components个奇异值和向量
+            U = U[:, :n_components]
+            s = s[:n_components]
+            
+            # 计算降维后的特征：U * s
+            X_train_head_reduced = U * s
+            
+            # 标准化
+            scaler = StandardScaler(with_mean=True)
+            X_train_head_reduced = scaler.fit_transform(X_train_head_reduced)
+            
+            # 存储降维后的特征和SVD模型
+            key = (layer, head)
+            reduced_features[key] = X_train_head_reduced
+            svd_models[key] = (Vt[:n_components], s, scaler)  # 存储右奇异向量和奇异值
+    
+    # 构建Group Lasso问题的特征矩阵
+    feature_groups = []
+    group_indices = []
+    start_idx = 0
+    # 创建反向映射字典：group_idx -> (layer, head)
+    group_idx_to_layer_head = {}
+
+    for layer in range(l0_layer, ln_layer):
+        for head in range(num_heads):
+            key = (layer, head)
+            X_reduced = reduced_features[key]
+            feature_groups.append(X_reduced)
+            
+            # 记录该组特征的索引范围
+            end_idx = start_idx + X_reduced.shape[1]
+            group_idx = len(group_indices)  # 当前组的索引
+            group_indices.append((start_idx, end_idx, layer, head))
+            # 记录从组索引到(layer, head)的映射
+            group_idx_to_layer_head[group_idx] = (layer, head)
+            start_idx = end_idx
+    
+    # 水平连接所有特征
+    X_train_combined = np.hstack(feature_groups)
+
+    # 定义组结构，用于group-lasso包
+    groups = np.zeros(X_train_combined.shape[1])
+    for i, (start_idx, end_idx, _, _) in enumerate(group_indices):
+        groups[start_idx:end_idx] = i
+
+    print("starting layer index: ", l0_layer)
+    print("head_per_layer: ", num_heads)
+    print("svd_components: ", svd_components)
+    print("concat_feature_dim: ", l0_layer * num_heads * svd_components)
+    print("X_train_combined shape: ", X_train_combined.shape)
+    print("groups shape: ", groups.shape)
+
+    # 使用group-lasso包的LogisticGroupLasso
+    print("start training group lasso")
+
+    # 初始化LogisticGroupLasso模型
+    gl_model = LogisticGroupLasso(
+        groups=groups,
+        group_reg=group_reg,
+        l1_reg=l1_reg,
+        scale_reg="inverse_group_size",
+        n_iter=100,
+        tol=1e-3,
+        random_state=seed,
+        supress_warning=True,
+    )
+    
+    # 训练模型
+    import time
+    tik = time.time()
+    gl_model.fit(X_train_combined, y_train)
+    tok = time.time()
+    print(f"Training time: {tok - tik} seconds")
+
+    print(gl_model.losses_)
+
+    print(gl_model.chosen_groups_)
+    
+    # 使用gl_model.chosen_groups_选择top_heads
+    # chosen_groups_是一个set，包含浮点数格式的组索引，需要转为整数
+    chosen_groups = {int(group_idx) for group_idx in gl_model.chosen_groups_}
+    print(f"Number of chosen heads: {len(chosen_groups)}")
+    
+    # 基于chosen_groups选择头部
+    if use_random_dir:
+        # 随机选择头部
+        potential_heads = [(layer, head) for layer in range(l0_layer, ln_layer) for head in range(num_heads)]
+        np.random.shuffle(potential_heads)
+        top_heads = potential_heads[:num_to_intervene]
+    else:
+        # 直接使用所有chosen_groups中的头部，不受num_to_intervene限制
+        top_heads = [group_idx_to_layer_head[group_idx] for group_idx in chosen_groups]
+        print(f"Final number of selected heads: {len(top_heads)}")
+    
+    # 为每个选定的头部训练单独的探针
+    probes = []
+    for layer in range(l0_layer, ln_layer):
+        for head in range(num_heads):
+            if (layer, head) in top_heads:
+                # 获取原始激活值
+                X_train_head = all_X_train[:, layer, head, :]
+                
+                # 训练逻辑回归探针
+                probe = LogisticRegression(random_state=seed, max_iter=1000)
+                probe.fit(X_train_head, y_train)
+                probes.append(probe)
+            else:
+                # 对未选中的头部添加空探针
+                probes.append(None)
+    
+    # 评估选定头部的性能
+    if not use_random_dir:
+        print("Selected heads performance:")
+        for layer, head in top_heads:
+            X_val_head = all_X_val[:, layer, head, :]
+            probe_idx = layer_head_to_flattened_idx(layer, head, num_heads)
+            if probes[probe_idx] is not None:
+                val_acc = accuracy_score(y_val, probes[probe_idx].predict(X_val_head))
+                print(f"Layer {layer}, Head {head}: Validation accuracy = {val_acc:.4f}")
+    
     return top_heads, probes
 
 def get_interventions_dict(top_heads, probes, tuning_activations, num_heads, use_center_of_mass, use_random_dir, com_directions): 
