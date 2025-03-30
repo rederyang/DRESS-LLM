@@ -18,7 +18,7 @@ from sklearn.decomposition import PCA
 
 import sys
 sys.path.append('../')
-from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions
+from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions, get_top_heads_group_lasso
 import llama
 import qwen2
 
@@ -37,6 +37,12 @@ def main():
     parser.add_argument('--val_ratio', type=float, help='ratio of validation set size to development set size', default=0.2)
     parser.add_argument('--use_center_of_mass', action='store_true', help='use center of mass direction', default=False)
     parser.add_argument('--use_random_dir', action='store_true', help='use random direction', default=False)
+    parser.add_argument('--collaborative_selection', action='store_true', help='use collaborative selection', default=False)
+    parser.add_argument('--l0_layer', type=int, default=0, help='start layer')
+    parser.add_argument('--ln_layer', type=int, default=40, help='end layer')
+    parser.add_argument('--select_svd_components', type=int, default=64, help='number of SVD components to select')
+    parser.add_argument('--l1_reg', type=float, default=0.0, help='L1 regularization')
+    parser.add_argument('--group_reg', type=float, default=0.05, help='group regularization')
     parser.add_argument('--device', type=int, default=0, help='device')
     parser.add_argument('--seed', type=int, default=42, help='seed')
     args = parser.parse_args()
@@ -79,12 +85,40 @@ def main():
     train_set_idxs = np.random.choice(train_idxs, size=int(len(train_idxs)*(1-args.val_ratio)), replace=False)
     val_set_idxs = np.array([x for x in train_idxs if x not in train_set_idxs])
 
+    print("getting top heads")
+
     # get directions
     com_directions = None
-    top_heads, probes = get_top_heads(train_set_idxs, val_set_idxs, separated_head_wise_activations, separated_labels, num_layers, num_heads, args.seed, args.num_heads, args.use_random_dir)
-    np.save(f"features/probes_{args.num_heads}_{args.alpha:.1f}.npy",probes)
-    np.save(f"features/top_heads_{args.num_heads}_{args.alpha:.1f}.npy",top_heads)
+    if args.collaborative_selection:
+        top_heads, probes = get_top_heads_group_lasso(train_set_idxs, 
+                                                      val_set_idxs, 
+                                                      separated_head_wise_activations, 
+                                                      separated_labels, 
+                                                      num_layers, 
+                                                      num_heads, 
+                                                      args.seed, 
+                                                      args.num_heads, 
+                                                      args.use_random_dir, 
+                                                      l0_layer=args.l0_layer, 
+                                                      ln_layer=args.ln_layer,
+                                                      svd_components=args.select_svd_components,
+                                                      l1_reg=args.l1_reg,
+                                                      group_reg=args.group_reg)
+    else:
+        top_heads, probes = get_top_heads(train_set_idxs, 
+                                          val_set_idxs, 
+                                          separated_head_wise_activations, 
+                                          separated_labels, 
+                                          num_layers, 
+                                          num_heads, 
+                                          args.seed, 
+                                          args.num_heads, 
+                                          args.use_random_dir)
+    os.makedirs(args.save_dir, exist_ok=True)
+    np.save(os.path.join(args.save_dir, f'probes_{args.num_heads}_{args.alpha:.1f}.npy'),probes)
+    np.save(os.path.join(args.save_dir, f'top_heads_{args.num_heads}_{args.alpha:.1f}.npy'),top_heads)
 
+    # 这里的interventions中得到的intervention向量实际上没有用到
     interventions = get_interventions_dict(top_heads, probes, tuning_activations, num_heads, args.use_center_of_mass, args.use_random_dir, com_directions)
 
     activations_dict = {} # save
@@ -99,19 +133,21 @@ def main():
             incorrect_activations = activations[1::2, :]
             correct_activations = np.mean(correct_activations, axis=0)
             incorrect_activations = np.mean(incorrect_activations, axis=0)
+            # 真正用到的intervention向量在这里计算
             displacement[head_no] = args.alpha * (correct_activations - incorrect_activations)
             
             activations_dict[layer_no][head_no] = displacement[head_no] # save
       
         device = model.model.layers[layer_no].self_attn.o_proj.weight.device.index
         displacement = torch.tensor(rearrange(displacement, 'h d -> (h d)'), device=device)
+        # FIXME: 原本的o_proj.bias中，没有被选中的heads的bias被覆盖为0; 还是说本身就为零？
         bias_tobe = F.linear(displacement.to(torch.float16), model.model.layers[layer_no].self_attn.o_proj.weight).to(device)
         model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(bias_tobe)
-    with open(f"features/activations_{args.num_heads}_{args.alpha:.1f}.pkl", 'wb') as f:
+    with open(os.path.join(args.save_dir, f'activations_{args.num_heads}_{args.alpha:.1f}.pkl'), 'wb') as f:
         pickle.dump(activations_dict, f)
 
-    print("save results")
-    save_folder = f"{args.save_dir}/{args.model_name}_dataset_{args.dataset_name}_seed_{args.seed}_top_{args.num_heads}_heads_alpha_{args.alpha:.1f}"
+    print("saving model with edited weights")
+    save_folder = os.path.join(args.save_dir, f'{args.model_name}_dataset_{args.dataset_name}_seed_{args.seed}_top_{args.num_heads}_heads_alpha_{args.alpha:.1f}')
     if os.path.exists(save_folder):
       shutil.rmtree(save_folder)
     os.makedirs(save_folder)
