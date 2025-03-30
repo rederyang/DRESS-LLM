@@ -17,7 +17,12 @@ import matplotlib.pyplot as plt
 import math
 
 parser = argparse.ArgumentParser()
-parser.add_argument('model_path', type=str)
+parser.add_argument('--model_path', type=str)
+parser.add_argument('--feature_path', type=str)
+parser.add_argument('--asset_path', type=str)
+parser.add_argument('--optimize_K', action='store_true', default=False)
+parser.add_argument('--variance_threshold', type=float, default=0.95)
+parser.add_argument('--default_K', type=int, default=64)
 args = parser.parse_args()
 
 a = 'top_'
@@ -44,24 +49,25 @@ answers = []
 
 # 读取基于数据集计算并保存好的转向向量
 np.load.__defaults__=(None, True, True, 'ASCII')
-probes = np.load("features/probes_" + dump_path + ".npy")
-top_heads = np.load(f"features/top_heads_" + dump_path + ".npy")
+probes = np.load(args.asset_path + "/probes_" + dump_path + ".npy")
+top_heads = np.load(args.asset_path + "/top_heads_" + dump_path + ".npy")
 np.load.__defaults__=(None, False, True, 'ASCII')
-with open(f"features/activations_" + dump_path + ".pkl", 'rb') as f:
+with open(args.asset_path + "/activations_" + dump_path + ".pkl", 'rb') as f:
     activations_dict = pickle.load(f)
 num_heads = model.config.num_attention_heads
-activations = np.load("features/Qwen1.5-14B-Chat_DRC_head_wise.npy")
+activations = np.load(args.feature_path + "/Qwen1.5-14B-Chat_DRC_head_wise.npy")
 activations = rearrange(activations, 'b l (h d) -> b l h d', h = num_heads)
 
 svd_s_dict = {}
 svd_Vh_dict = {}
+svd_K_dict = {}
 
-def svd_decomposition(layer_no, head_no, X):
+def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold=0.95, default_K=64):
     from scipy.linalg import svd
     U, s, Vh = svd(X, full_matrices=False)
     '''
-    X: (4096, 128), 4096个正负样本对之差
-    U: (4089, 128)
+    X: (N, 128), N个正负样本对之差
+    U: (N, 128)
     s: (128, ), sigma矩阵的主对角线元素(奇异值降序)
     Vh: (128, 128)
     '''
@@ -70,10 +76,61 @@ def svd_decomposition(layer_no, head_no, X):
     svd_s_dict[key] = s
     svd_Vh_dict[key] = Vh
 
+    # 确定最优的K
+    if optimize_K:
+        N, D = X.shape
+        
+        # 阶段1: 基于解释方差分析来划定搜索空间
+        # 计算每个奇异值的解释方差比例
+        var_explained = (s**2) / np.sum(s**2)
+        # 计算累积解释方差
+        cumulative_var_explained = np.cumsum(var_explained)
+        
+        # 找到满足阈值的最小K值
+        K_var = np.argmax(cumulative_var_explained >= variance_threshold) + 1
+        
+        # 定义搜索范围
+        K_min = max(1, int(K_var/2))
+        K_max = min(s.shape[0], int(1.5 * K_var))
+        
+        # 阶段2: 使用贝叶斯信息准则(BIC)在搜索范围内找到最优K
+        best_K = K_min
+        best_BIC = float('inf')
+        
+        for K in range(K_min, K_max + 1):
+            # 使用前K个奇异值和向量重建数据
+            X_reconstructed = U[:, :K] @ np.diag(s[:K]) @ Vh[:K, :]
+            
+            # 计算均方误差
+            MSE = np.mean((X - X_reconstructed) ** 2)
+            
+            # 计算BIC
+            # BIC = N * D * log(MSE) + K * (N + D + 1) * log(N * D)
+            BIC = N * D * np.log(MSE) + K * (N + D + 1) * np.log(N * D)
+            
+            if BIC < best_BIC:
+                best_BIC = BIC
+                best_K = K
+        
+        # 如果最优K还是搜索范围的边界，可能需要扩大搜索范围
+        if best_K == K_min or best_K == K_max:
+            print(f"Warning: Optimal K ({best_K}) is at the boundary of search range for Layer {layer_no}, Head {head_no}. Consider expanding the search range.")
+        
+        # 保存最优K值
+        svd_K_dict[key] = best_K
+        print(f"Layer {layer_no}, Head {head_no}: Optimal K = {best_K}, Variance explained = {cumulative_var_explained[best_K-1]:.4f}")
+    else:
+        # 如果不优化K，默认使用固定值64（与原始DRESS框架一致）
+        svd_K_dict[key] = default_K
+    
+    return
+
 
 def get_steering_vector(layer_no, head_no, vector, cur_activations):
+    # vector: 参考steering vector
+    # cur_activations: 当前layer, head的activation (bias=0情况下)
     key = 'L' + str(layer_no) + 'H' + str(head_no)
-    K = 64
+    K = svd_K_dict[key]
     s = svd_s_dict[key]
     Vh = svd_Vh_dict[key]
     Vh = Vh[:K, :]
@@ -156,7 +213,7 @@ for layer_no, heads in activations_dict.items():
             correct_activations = head_activations[::2, :]
             incorrect_activations = head_activations[1::2, :]
             correct_activations = correct_activations - incorrect_activations
-            svd_decomposition(layer_no, head_no, correct_activations)
+            svd_decomposition(layer_no, head_no, correct_activations, optimize_K=args.optimize_K, variance_threshold=args.variance_threshold, default_K=args.default_K)
 print("分解完毕")
 
 
