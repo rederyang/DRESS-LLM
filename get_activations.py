@@ -22,6 +22,7 @@ def main():
     parser.add_argument('dataset_name', type=str, default='Daiyu')
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument("--model_dir", type=str, default=None, help='local directory with model data')
+    parser.add_argument("--save_dir", type=str, default=None, help='local directory to save activations')
     args = parser.parse_args()
 
     MODEL = args.model_dir
@@ -46,6 +47,8 @@ def main():
     prompts, labels = formatter(dataset, tokenizer)
     print(len(prompts), len(labels))
 
+    # interleave structure:
+    # prompts = [(qeury + correct_answer), (query + incorrect_answer), (query + correct_answer), (query + incorrect_answer), ...]
     
     all_layer_wise_activations = []
     all_head_wise_activations = []
@@ -62,16 +65,16 @@ def main():
 
         gc.collect()
 
-    os.makedirs(f'features', exist_ok=True)
+    os.makedirs(f'{args.save_dir}', exist_ok=True)
 
     print("Saving labels")
-    np.save(f'features/{args.model_name}_{args.dataset_name}_labels.npy', labels)
+    np.save(os.path.join(args.save_dir, f'{args.model_name}_{args.dataset_name}_labels.npy'), labels)
 
     print("Saving layer wise activations")
-    np.save(f'features/{args.model_name}_{args.dataset_name}_layer_wise.npy', all_layer_wise_activations)
+    np.save(os.path.join(args.save_dir, f'{args.model_name}_{args.dataset_name}_layer_wise.npy'), all_layer_wise_activations)
     
     print("Saving head wise activations")
-    np.save(f'features/{args.model_name}_{args.dataset_name}_head_wise.npy', all_head_wise_activations)
+    np.save(os.path.join(args.save_dir, f'{args.model_name}_{args.dataset_name}_head_wise.npy'), all_head_wise_activations)
     
 
 if __name__ == '__main__':
