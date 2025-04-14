@@ -75,3 +75,12 @@ desktop.ini
 # 日志文件
 *.log
 *.out
+
+
+
+
+/models
+run.sh
+result.json
+token_git
+count.py
