@@ -18,7 +18,7 @@ from sklearn.decomposition import PCA
 
 import sys
 sys.path.append('../')
-from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions, get_top_heads_group_lasso
+from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions, get_top_heads_group_lasso, get_top_heads_heuristic
 import llama
 import qwen2
 
@@ -38,6 +38,7 @@ def main():
     parser.add_argument('--use_center_of_mass', action='store_true', help='use center of mass direction', default=False)
     parser.add_argument('--use_random_dir', action='store_true', help='use random direction', default=False)
     parser.add_argument('--collaborative_selection', action='store_true', help='use collaborative selection', default=False)
+    parser.add_argument('--selection_method', type=str, choices=['group_lasso', 'linear_probing', 'heuristic'], default='linear_probing', help='head selection method')
     parser.add_argument('--l0_layer', type=int, default=0, help='start layer')
     parser.add_argument('--ln_layer', type=int, default=40, help='end layer')
     parser.add_argument('--select_svd_components', type=int, default=64, help='number of SVD components to select')
@@ -89,7 +90,7 @@ def main():
 
     # get directions
     com_directions = None
-    if args.collaborative_selection:
+    if args.selection_method == 'group_lasso':
         top_heads, probes = get_top_heads_group_lasso(train_set_idxs, 
                                                       val_set_idxs, 
                                                       separated_head_wise_activations, 
@@ -104,7 +105,7 @@ def main():
                                                       svd_components=args.select_svd_components,
                                                       l1_reg=args.l1_reg,
                                                       group_reg=args.group_reg)
-    else:
+    elif args.selection_method == 'linear_probing':
         top_heads, probes = get_top_heads(train_set_idxs, 
                                           val_set_idxs, 
                                           separated_head_wise_activations, 
@@ -114,6 +115,19 @@ def main():
                                           args.seed, 
                                           args.num_heads, 
                                           args.use_random_dir)
+    elif args.selection_method == 'heuristic':
+        top_heads, probes = get_top_heads_heuristic(train_set_idxs,
+                                                    val_set_idxs,
+                                                    separated_head_wise_activations,
+                                                    separated_labels,
+                                                    num_layers,
+                                                    num_heads,
+                                                    args.seed,
+                                                    args.num_heads,
+                                                    args.use_random_dir,
+                                                    pa_threshold=0.6,
+                                                    ds_percentile_threshold=0.1,
+                                                    ds_metric='norm')
     os.makedirs(args.save_dir, exist_ok=True)
     np.save(os.path.join(args.save_dir, f'probes_{args.num_heads}_{args.alpha:.1f}.npy'),probes)
     np.save(os.path.join(args.save_dir, f'top_heads_{args.num_heads}_{args.alpha:.1f}.npy'),top_heads)

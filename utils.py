@@ -920,6 +920,170 @@ def get_top_heads_group_lasso(train_idxs, val_idxs, separated_activations, separ
     
     return top_heads, probes
 
+def get_top_heads_heuristic(
+    train_idxs,
+    val_idxs,
+    separated_activations,
+    separated_labels,
+    num_layers,
+    num_heads,
+    seed,
+    num_to_intervene,
+    use_random_dir=False,
+    # Heuristic parameters
+    pa_threshold=0.6, # Accuracy threshold (Stage 1)
+    ds_percentile_threshold=0.1, # Discard bottom X% based on DS (Stage 2) - e.g., 0.1 means discard bottom 10%
+    ds_metric='norm' # 'norm' for ||δū||₂, 'svd' for σ₁ (only 'norm' implemented here)
+):
+    """
+    Selects top attention heads based on a heuristic multi-stage filtering process:
+    1. Filter by Probing Accuracy (PA) > pa_threshold
+    2. Filter by Difference Strength (DS) > percentile threshold
+    3. Rank remaining heads by Direction Consistency (DC)
+
+    Assumes train_probes function exists and returns: probes_flat, all_head_accs_np
+    Assumes helper functions flattened_idx_to_layer_head and layer_head_to_flattened_idx exist.
+    """
+
+    if use_random_dir:
+        print("Selecting random heads (heuristic method bypassed).")
+        # Need to call train_probes anyway to get the probes list for the return value
+        probes_flat, _ = train_probes(seed, train_idxs, val_idxs, separated_activations, separated_labels, num_layers=num_layers, num_heads=num_heads)
+        random_idxs = np.random.choice(num_heads * num_layers, num_heads * num_layers, replace=False)
+        top_heads = [flattened_idx_to_layer_head(idx, num_heads) for idx in random_idxs[:num_to_intervene]]
+        return top_heads, probes_flat
+
+    print(f"Starting heuristic head selection with PA threshold > {pa_threshold}, DS percentile > {ds_percentile_threshold*100:.1f}%")
+
+    # --- Stage 0: Train Probes & Get Accuracies ---
+    # Call the existing train_probes function
+    probes_flat, all_head_accs_np = train_probes(
+        seed, train_idxs, val_idxs, separated_activations, separated_labels, num_layers=num_layers, num_heads=num_heads
+    )
+    # Reshape accuracy array for easier lookup by (layer, head)
+    # Ensure the reshaping order matches how probes_flat and all_head_accs_np were created
+    probe_accuracies_np = all_head_accs_np.reshape(num_layers, num_heads)
+
+    # --- Calculate DS and DC (using Training Data) ---
+    print("Calculating Difference Strength (DS) and Direction Consistency (DC)...")
+    head_metrics = {} # Store PA, DS, DC for each head (layer, head) tuple
+
+    # Prepare training data for mean calculation
+    train_activations_samples = [separated_activations[i] for i in train_idxs]
+    if not train_activations_samples:
+         raise ValueError("Cannot calculate DS/DC without training samples.")
+    train_activations_all = np.concatenate(train_activations_samples, axis=0)
+    train_labels_all = np.concatenate([separated_labels[i] for i in train_idxs], axis=0)
+
+    # Separate target (label 1) and ordinary (label 0) activations from the training set
+    # Assumes interleaving: target is even index, ordinary is odd index if labels reflect this
+    # A safer way is to use the labels directly
+    target_activations_train = train_activations_all[train_labels_all == 1]
+    ordinary_activations_train = train_activations_all[train_labels_all == 0]
+
+    if target_activations_train.shape[0] == 0 or ordinary_activations_train.shape[0] == 0:
+        raise ValueError("Training data does not contain samples for both target (label 1) and ordinary (label 0) styles.")
+
+    for layer in range(num_layers):
+        for head in range(num_heads):
+            head_id = (layer, head)
+            flat_idx = layer_head_to_flattened_idx(layer, head, num_heads)
+
+            # Get Probing Accuracy (PA)
+            pa = probe_accuracies_np[layer, head]
+
+            # Calculate mean activations for this head using TRAINING data
+            mean_target_act = np.mean(target_activations_train[:, layer, head, :], axis=0)
+            mean_ordinary_act = np.mean(ordinary_activations_train[:, layer, head, :], axis=0)
+
+            # Calculate mean difference vector (δū)
+            delta_u_bar = mean_target_act - mean_ordinary_act
+
+            # Calculate Difference Strength (DS)
+            if ds_metric == 'norm':
+                ds = np.linalg.norm(delta_u_bar)
+            # elif ds_metric == 'svd':
+            #     # Implementation for SVD-based DS would go here if needed
+            #     raise NotImplementedError("DS metric 'svd' not implemented yet.")
+            else:
+                raise ValueError(f"Unknown ds_metric: {ds_metric}")
+
+            # Calculate Direction Consistency (DC)
+            probe = probes_flat[flat_idx] # Get the corresponding probe from the flat list
+            theta = probe.coef_[0] # Classifier weight vector
+
+            # Ensure dimensions match and calculate cosine similarity
+            if theta.shape[0] == delta_u_bar.shape[0]:
+                 # Reshape for cosine_similarity function
+                 theta_r = theta.reshape(1, -1)
+                 delta_u_bar_r = delta_u_bar.reshape(1, -1)
+                 # Handle potential zero vectors
+                 if np.all(delta_u_bar_r == 0) or np.all(theta_r == 0):
+                     dc = 0.0 # Cosine is undefined/0 if one vector is zero
+                 else:
+                    # Add small epsilon to avoid division by zero in cosine calculation if norm is tiny
+                    norm_theta = np.linalg.norm(theta_r)
+                    norm_delta_u = np.linalg.norm(delta_u_bar_r)
+                    if norm_theta < 1e-9 or norm_delta_u < 1e-9:
+                        dc = 0.0
+                    else:
+                        dc = np.dot(theta_r, delta_u_bar_r.T) / (norm_theta * norm_delta_u)
+                        dc = dc[0,0] # Extract scalar value
+            else:
+                warnings.warn(f"Shape mismatch for DC calc at head {head_id}: theta {theta.shape}, delta_u_bar {delta_u_bar.shape}. Assigning DC=-1.")
+                dc = -1.0 # Assign low value on error
+
+            head_metrics[head_id] = {'pa': pa, 'ds': ds, 'dc': dc}
+
+    # --- Stage 1: Filter by PA ---
+    print(f"Filtering {len(head_metrics)} heads by PA > {pa_threshold}...")
+    filtered_heads_pa = {h: m for h, m in head_metrics.items() if m['pa'] > pa_threshold}
+    print(f"  {len(filtered_heads_pa)} heads remaining after PA filter.")
+
+    if not filtered_heads_pa:
+        warnings.warn("No heads passed the PA filter. Returning empty list.")
+        return [], probes_flat # Return empty list and all probes
+
+    # --- Stage 2: Filter by DS ---
+    print(f"Filtering by DS > {ds_percentile_threshold*100:.1f}th percentile...")
+    ds_values_pa_filtered = np.array([m['ds'] for m in filtered_heads_pa.values()])
+    if len(ds_values_pa_filtered) == 0:
+        ds_threshold_value = -np.inf # Should not be reached if filtered_heads_pa is not empty
+    elif len(ds_values_pa_filtered) == 1:
+        ds_threshold_value = ds_values_pa_filtered[0] * 0.9 # Handle single element case for percentile
+    else:
+        # Use interpolation='lower' to be conservative if needed, default is linear
+        ds_threshold_value = np.percentile(ds_values_pa_filtered, ds_percentile_threshold * 100)
+
+    print(f"  DS threshold value: {ds_threshold_value:.4f}")
+    filtered_heads_ds = {h: m for h, m in filtered_heads_pa.items() if m['ds'] > ds_threshold_value}
+    print(f"  {len(filtered_heads_ds)} heads remaining after DS filter.")
+
+    if not filtered_heads_ds:
+        warnings.warn("No heads passed the DS filter. Returning empty list.")
+        return [], probes_flat
+
+    # --- Stage 3: Rank by DC ---
+    print(f"Ranking {len(filtered_heads_ds)} heads by DC (descending)...")
+    # Sort heads by DC value in descending order
+    # Handle potential NaN or Inf in dc (though checks above should prevent it)
+    sorted_heads = sorted(filtered_heads_ds.keys(),
+                          key=lambda h: filtered_heads_ds[h]['dc'] if np.isfinite(filtered_heads_ds[h]['dc']) else -np.inf,
+                          reverse=True)
+
+    # --- Select Top-H ---
+    top_heads = sorted_heads[:num_to_intervene]
+    print(f"Selected top {len(top_heads)} heads.")
+
+    # --- Print Performance of Selected Heads (Optional but helpful) ---
+    print("\nSelected heads performance:")
+    for layer, head in top_heads:
+        metrics = head_metrics.get((layer, head), {'pa': np.nan, 'ds': np.nan, 'dc': np.nan}) # Safe get
+        print(f"Layer {layer:2d}, Head {head:2d}: PA={metrics['pa']:.4f}, DS={metrics['ds']:.4f}, DC={metrics['dc']:.4f}")
+
+    # Return list of (layer, head) tuples and the original flat list of probes
+    return top_heads, probes_flat
+
 def get_interventions_dict(top_heads, probes, tuning_activations, num_heads, use_center_of_mass, use_random_dir, com_directions): 
 
     interventions = {}
