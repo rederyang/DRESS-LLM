@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import pickle
 import sys
+import time  # Add time module
 sys.path.append('../')
 from utils import get_llama_activations_bau, tokenized_tqa, tokenized_tqa_gen, tokenized_tqa_gen_end_q
 from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions
@@ -23,6 +24,7 @@ parser.add_argument('--asset_path', type=str)
 parser.add_argument('--optimize_K', action='store_true', default=False)
 parser.add_argument('--variance_threshold', type=float, default=0.95)
 parser.add_argument('--default_K', type=int, default=64)
+parser.add_argument('--SVD_path', type=str)
 args = parser.parse_args()
 
 a = 'top_'
@@ -48,9 +50,9 @@ for QA in data_list:
 answers = []
 
 # 读取基于数据集计算并保存好的转向向量
-np.load.__defaults__=(None, True, True, 'ASCII')
-probes = np.load(args.asset_path + "/probes_" + dump_path + ".npy")
-top_heads = np.load(args.asset_path + "/top_heads_" + dump_path + ".npy")
+# np.load.__defaults__=(None, True, True, 'ASCII')
+# probes = np.load(args.asset_path + "/probes_" + dump_path + ".npy")
+# top_heads = np.load(args.asset_path + "/top_heads_" + dump_path + ".npy")
 np.load.__defaults__=(None, False, True, 'ASCII')
 with open(args.asset_path + "/activations_" + dump_path + ".pkl", 'rb') as f:
     activations_dict = pickle.load(f)
@@ -61,6 +63,30 @@ activations = rearrange(activations, 'b l (h d) -> b l h d', h = num_heads)
 svd_s_dict = {}
 svd_Vh_dict = {}
 svd_K_dict = {}
+
+def save_svd_results(svd_s_dict, svd_Vh_dict, svd_K_dict, dump_path):
+    """Save SVD decomposition results to files"""
+    results = {
+        'svd_s_dict': svd_s_dict,
+        'svd_Vh_dict': svd_Vh_dict,
+        'svd_K_dict': svd_K_dict
+    }
+    # Use SVD_path if provided, otherwise use default path
+    save_path = args.SVD_path if args.SVD_path else f"svd_results_{dump_path}.pkl"
+    with open(save_path, 'wb') as f:
+        pickle.dump(results, f)
+
+def load_svd_results():
+    """Load SVD decomposition results from files"""
+    try:
+        # Use SVD_path if provided, otherwise use default path
+        load_path = args.SVD_path if args.SVD_path else f"svd_results_{dump_path}.pkl"
+        with open(load_path, 'rb') as f:
+            results = pickle.load(f)
+        return results['svd_s_dict'], results['svd_Vh_dict'], results['svd_K_dict']
+    except FileNotFoundError:
+        print(f"Warning: SVD results file not found at {load_path}. Will compute new results.")
+        return None, None, None
 
 def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold=0.95, default_K=64):
     from scipy.linalg import svd
@@ -209,17 +235,35 @@ def my_generate(w0, q_tokens, inputs):
 
 
 print("为所有head上的转向向量作svd分解并保存")
-for layer_no, heads in activations_dict.items():
+# Try to load existing SVD results
+loaded_s, loaded_Vh, loaded_K = load_svd_results()
+
+if loaded_s is not None and loaded_Vh is not None and loaded_K is not None:
+    print("Loading existing SVD decomposition results...")
+    svd_s_dict = loaded_s
+    svd_Vh_dict = loaded_Vh
+    svd_K_dict = loaded_K
+else:
+    print("Computing SVD decomposition...")
+    for layer_no, heads in activations_dict.items():
         for head_no, vector in activations_dict[layer_no].items():
             head_activations = activations[:,layer_no,head_no,:]
             correct_activations = head_activations[::2, :]
             incorrect_activations = head_activations[1::2, :]
             correct_activations = correct_activations - incorrect_activations
             svd_decomposition(layer_no, head_no, correct_activations, optimize_K=args.optimize_K, variance_threshold=args.variance_threshold, default_K=args.default_K)
-print("分解完毕")
+    
+    # Save the computed results
+    save_svd_results(svd_s_dict, svd_Vh_dict, svd_K_dict, dump_path)
+print("SVD decomposition completed")
 
+# Track timing information
+generation_times = []
+total_start_time = time.time()
 
 for index, question in enumerate(questions):
+    # Start timing this specific generation
+    start_time = time.time()
     
     q_tokens = tokenizer(question, return_tensors = 'pt').input_ids
     w0 = get_activations(q_tokens)
@@ -233,20 +277,51 @@ for index, question in enumerate(questions):
     sequence = my_generate(w0, q_tokens.to('cuda:0'), inputs)
     # print(sequence)
     answer = tokenizer.decode(sequence, skip_special_tokens=True)
-    print(index, answer)
-    answers.append(answer)
     
+    # End timing and record
+    end_time = time.time()
+    generation_time = end_time - start_time
+    generation_times.append(generation_time)
+    
+    print(f"[{index}] Time: {generation_time:.2f}s - {answer}")
+    answers.append(answer)
 
+# Calculate total time
+total_time = time.time() - total_start_time
+avg_time = sum(generation_times) / len(generation_times) if generation_times else 0
+
+print(f"\n===== Generation Timing Statistics =====")
+print(f"Total generation time: {total_time:.2f} seconds")
+print(f"Average time per response: {avg_time:.2f} seconds")
+print(f"Fastest generation: {min(generation_times):.2f} seconds")
+print(f"Slowest generation: {max(generation_times):.2f} seconds")
+print(f"Total number of responses: {len(generation_times)}")
+print(f"=====================================\n")
 
 output_data = []
 for i in range(len(questions)):
     dict = {}
     dict["question"] = questions[i]
     dict["daiyu_answer"] = answers[i]
+    dict["generation_time"] = generation_times[i]  # Add timing information to output
     dict["model_path"] = args.model_path
     output_data.append(dict)
-###########################
-with open("result_testing.json", 'w', encoding='utf-8') as new_file:
-    json.dump(output_data, new_file, ensure_ascii=False, indent=4)
+
+# Add timing metadata to output
+timing_metadata = {
+    "total_time": total_time,
+    "average_time": avg_time,
+    "min_time": min(generation_times),
+    "max_time": max(generation_times),
+    "count": len(generation_times)
+}
+
+output_with_timing = {
+    "timing_metadata": timing_metadata,
+    "results": output_data
+}
+
+with open("result_whole_DRC_AdaptiveK.json", 'w', encoding='utf-8') as new_file:
+    json.dump(output_with_timing, new_file, ensure_ascii=False, indent=4)
 
 # python generate.py --model_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/edited_model/Qwen1.5-14B-Chat_dataset_DRC_seed_42_top_64_heads_alpha_3.0" --asset_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features" --feature_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features" --optimize_K

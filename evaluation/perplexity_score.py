@@ -8,72 +8,178 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),"..")))
 import qwen2
 
 
-def calculate_batch_perplexity(model, tokenizer, input_texts):
-    inputs = tokenizer(
-        input_texts, return_tensors="pt", padding=True, truncation=True
-    )
+model_path = '../models/Qwen1.5-14B-Chat'
+tokenizer = qwen2.Qwen2Tokenizer.from_pretrained(model_path)
+model = qwen2.Qwen2ForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, torch_dtype=torch.float16, device_map="auto")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+model.eval()
 
-    input_ids = inputs["input_ids"].to(device)
-    attention_mask = inputs["attention_mask"].to(device)
-    print(input_ids.shape, attention_mask.shape)
+ppls = []
+fss = []
 
-    # Pass the input batch through the model to get logits
-    with torch.no_grad():
-        outputs = model(input_ids, attention_mask=attention_mask)
-        logits = outputs.logits
-
-    # Shift the logits and input_ids to align targets correctly
-    # Logits dimensions are: (batch_size, seq_length, vocab_size) 
-    shift_logits = logits[:, :-1, :]  # Ignore the last token's logits
-    shift_labels = input_ids[:, 1:]   # Skip the first token in the labels
-
-    # Compute log probabilities
-    log_probs = torch.nn.functional.log_softmax(shift_logits, dim=-1)
-
-    # Gather the log probabilities for the correct tokens
-    target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-
-    # Mask out positions corresponding to padding tokens
-    target_log_probs = target_log_probs * attention_mask[:, 1:].to(log_probs.dtype)
-
-    # Compute the mean negative log-likelihood for each sequence
-    negative_log_likelihood = -target_log_probs.sum(dim=-1) / attention_mask[:, 1:].sum(dim=-1)
-
-    # Compute perplexity for each sequence
-    perplexities = torch.exp(negative_log_likelihood)
-    perplexities = perplexities.tolist()
-
-    return perplexities
-
-if __name__ == "__main__":
-    with open("../result.json", 'r', encoding='utf-8') as file:
-        stylized_res = json.load(file)
-    MODEL = "../models/Qwen1.5-14B-Chat"
-
+with open("../result_selected_50_DRESS_ORI.json", 'r', encoding='utf-8') as file:
+    stylized_res = json.load(file)
     
-    stylized_responses = [item['daiyu_answer'] for item in stylized_res]
+stylized_responses = [item['daiyu_answer'] for item in stylized_res]
 
-    # memory required is high, seperate for testing
-    stylized_responses = stylized_responses[180:220] 
-    # stylized_responses = stylized_responses[100:110] 
+for index, question in enumerate(stylized_responses):
+    print(index)
+    inputs = tokenizer(question, return_tensors='pt')
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    # note only one sentence is in a batch so we use [0]
+    # Hence no padding, all attion_mask should be 1
+    inputs["input_ids"] = torch.tensor([[model.config.bos_token_id]+inputs["input_ids"][0].tolist()]).to(device) # append a start token to the input
+    # print(inputs["input_ids"].shape)
+    inputs["attention_mask"] = torch.tensor([[1]+inputs["attention_mask"][0].tolist()]).to(device)
+    # print(inputs["attention_mask"].shape)
+    # if torch.all(inputs["attention_mask"] == 1):
+    #     print("Attention mask contains only 1s")
+    
+    with torch.no_grad():
+        outputs = model(**inputs) ## ** unpack dictionary so the values of "matched" keys are passed as to the corresponding arguements
+        logits = outputs.logits
+        logits = logits.view(logits.size(1), logits.size(2)) # size = (seq_len, vocab_size)
+        # print(logits.size())
+        prob = torch.nn.functional.log_softmax(logits, dim=1) 
+        prob_list = []
+        for i in range(prob.size(0)-1):
+            prob_list.append(prob[i,inputs["input_ids"][0][i+1]].item()) # only consider the "correct" next word probability as the perplexity
+        if len(prob_list) == 0:
+            ppl = 1.0
+        else:
+            # standard way of perplexity
+            prob_list = np.array(prob_list) 
+            sum_p = np.sum(prob_list)
+            ppl = np.exp(-1/prob_list.size * sum_p)
+            fs = 1 / (1 + np.log(ppl))
+        
+        ppls.append(ppl)
+        fss.append(fs)
 
-    tokenizer = qwen2.Qwen2Tokenizer.from_pretrained(MODEL)
-    model = qwen2.Qwen2ForCausalLM.from_pretrained(MODEL, low_cpu_mem_usage=True, torch_dtype=torch.float16, device_map="auto")
-    device = "cuda"
-    model.to(device)
-    # perplexity scores
-    perplexities = calculate_batch_perplexity(model, tokenizer, stylized_responses)
-    mean_perplexity_score = np.mean(perplexities)
-    print(mean_perplexity_score.shape)
-    print(f"Mean Perplexity Score: {mean_perplexity_score}")
+ppls = np.array(ppls)
+print(f"Total num of samples: {ppls.shape}")
 
-    # fluency scores
-    fluency_scores = [1 / (1 + np.log(ppl)) for ppl in perplexities]
-    mean_fluency_score = np.mean(fluency_scores)
-    print(f"Mean Fluency Score: {mean_fluency_score}")
+ppl_mean_all = np.mean(ppls)
+if ppl_mean_all == float('inf'):
+    ppl_mean_all = "infinity"
+print(f"Mean_perplexity_All: {ppl_mean_all}")
+print(f"FluencyScore_All: {1 / np.log(1 + ppl_mean_all)}")
 
-# python perplexity_score.py 
+ppl_mean_dy = np.mean(ppls[0:200])
+if ppl_mean_dy == float('inf'):
+    ppl_mean_dy = "infinity"
+print(f"Mean_perplexity_First_half: {ppl_mean_dy}")
+print(f"FluencyScore_FirstHalf: {1 / np.log(1 + ppl_mean_dy)}")
 
 
+ppl_mean_md = np.mean(ppls[-200:])
+if ppl_mean_md == float('inf'):
+    ppl_mean_md = "infinity"
+print(f"Mean_perplexity_SecondHalf: {ppl_mean_md}")
+print(f"FluencyScore_SecondHalf: {1 / np.log(1 + ppl_mean_md)}")
+
+
+fss = np.array(fss)
+print(f"Total num of samples: {fss.shape}")
+
+fs_mean_all = np.mean(fss)
+if fs_mean_all == float('inf'):
+    fs_mean_all = "infinity"
+print(f"FluencyScore_All: {fs_mean_all}")
+
+fs_mean_dy = np.mean(fss[0:200])
+if fs_mean_dy == float('inf'):
+    fs_mean_dy = "infinity"
+print(f"FluencyScore_FirstHalf: {fs_mean_dy}")
+
+
+fs_mean_md = np.mean(fss[-200:])
+if fs_mean_md == float('inf'):
+    fs_mean_md = "infinity"
+print(f"FluencyScore_SecondHalf: {fs_mean_md}")
+
+# #python perplexity_score.py
+
+
+
+
+
+
+####### original perplexity score by author ###############
+
+# for index, question in enumerate(stylized_responses):
+#     print(index)
+#     inputs = tokenizer(question, return_tensors='pt')
+#     # Move all inputs to GPU
+#     inputs = {k: v.to(device) for k, v in inputs.items()}
+    
+#     # Create new tensors directly on GPU
+#     inputs["input_ids"] = torch.tensor([[model.config.bos_token_id]+inputs["input_ids"][0].tolist()], device=device)
+#     inputs["attention_mask"] = torch.tensor([[1]+inputs["attention_mask"][0].tolist()], device=device)
+    
+#     with torch.no_grad():
+#         outputs = model(**inputs)
+#         logits = outputs.logits
+#         logits = logits.view(logits.size(1), logits.size(2))
+#         prob = torch.nn.functional.softmax(logits, dim=1)
+#         prob_list = []
+#         for i in range(prob.size(0)-1):
+#             prob_list.append(prob[i,inputs["input_ids"][0][i+1]].item())
+#         if len(prob_list) == 0:
+#             ppl = 1.0
+#             fs = 1.0  # Maximum fluency for empty sequence
+#         else:
+#             prob_list = np.array(prob_list)
+#             prob_list = prob_list ** (1.0/(prob.size(0)-1))
+#             prob_list = 1.0 / prob_list
+#             ppl = np.prod(prob_list)
+#             fs = 1 / (1 + np.log(ppl))  # Calculate fluency score
+        
+#         ppls.append(ppl)
+#         fss.append(fs)  # Store fluency scores
+
+# ppls = np.array(ppls)
+# print(ppls.shape)
+
+# ppl_mean_all = np.mean(ppls)
+# if ppl_mean_all == float('inf'):
+#     ppl_mean_all = "infinity"
+# print(ppl_mean_all)
+# # ppl_med_all = np.median(ppls)
+# # if ppl_med_all == float('inf'):
+# #     ppl_med_all = "infinity"
+# # print(ppl_med_all)
+
+# ppl_mean_dy = np.mean(ppls[0:200])
+# if ppl_mean_dy == float('inf'):
+#     ppl_mean_dy = "infinity"
+# print(ppl_mean_dy)
+# # ppl_med_dy = np.median(ppls[0:200])
+# # if ppl_med_dy == float('inf'):
+# #     ppl_med_dy = "infinity"
+# # print(ppl_med_dy)
+
+# ppl_mean_md = np.mean(ppls[-200:])
+# if ppl_mean_md == float('inf'):
+#     ppl_mean_md = "infinity"
+# print(ppl_mean_md)
+# # ppl_med_md = np.median(ppls[-200:])
+# # if ppl_med_md == float('inf'):
+# #     ppl_med_md = "infinity"
+# # print(ppl_med_md)
+
+# fss = np.array(fss)
+# print("Fluency Scores:")
+# print(f"Total samples: {fss.shape}")
+
+# fs_mean_all = np.mean(fss)
+# print(f"Mean Fluency Score (All): {fs_mean_all}")
+
+# fs_mean_dy = np.mean(fss[0:200])
+# print(f"Mean Fluency Score (First Half): {fs_mean_dy}")
+
+# fs_mean_md = np.mean(fss[-200:])
+# print(f"Mean Fluency Score (Second Half): {fs_mean_md}")
 
 
