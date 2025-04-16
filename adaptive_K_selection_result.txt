@@ -1,0 +1,78 @@
+Layer 13, Head 9: Optimal K = 2, Variance explained = 0.3160
+Warning: Optimal K (1) is at the boundary of search range for Layer 13, Head 32. Consider expanding the search range.
+Layer 13, Head 32: Optimal K = 1, Variance explained = 0.2492
+Layer 13, Head 34: Optimal K = 2, Variance explained = 0.5458
+Layer 13, Head 37: Optimal K = 2, Variance explained = 0.4133
+Warning: Optimal K (1) is at the boundary of search range for Layer 8, Head 18. Consider expanding the search range.
+Layer 8, Head 18: Optimal K = 1, Variance explained = 0.4734
+Layer 8, Head 21: Optimal K = 2, Variance explained = 0.5040
+Warning: Optimal K (1) is at the boundary of search range for Layer 8, Head 25. Consider expanding the search range.
+Layer 8, Head 25: Optimal K = 1, Variance explained = 0.1285
+Layer 16, Head 3: Optimal K = 3, Variance explained = 0.6869
+Warning: Optimal K (1) is at the boundary of search range for Layer 16, Head 11. Consider expanding the search range.
+Layer 16, Head 11: Optimal K = 1, Variance explained = 0.1331
+Layer 16, Head 24: Optimal K = 2, Variance explained = 0.5287
+Warning: Optimal K (1) is at the boundary of search range for Layer 16, Head 30. Consider expanding the search range.
+Layer 16, Head 30: Optimal K = 1, Variance explained = 0.1663
+Layer 16, Head 32: Optimal K = 2, Variance explained = 0.3433
+Layer 17, Head 10: Optimal K = 2, Variance explained = 0.2261
+Layer 17, Head 16: Optimal K = 3, Variance explained = 0.5493
+Layer 17, Head 17: Optimal K = 2, Variance explained = 0.3242
+Layer 17, Head 30: Optimal K = 3, Variance explained = 0.7438
+Layer 12, Head 19: Optimal K = 2, Variance explained = 0.5388
+Layer 15, Head 6: Optimal K = 2, Variance explained = 0.3985
+Layer 15, Head 9: Optimal K = 2, Variance explained = 0.3651
+Layer 15, Head 10: Optimal K = 3, Variance explained = 0.7710
+Warning: Optimal K (1) is at the boundary of search range for Layer 15, Head 29. Consider expanding the search range.
+Layer 15, Head 29: Optimal K = 1, Variance explained = 0.1758
+Layer 15, Head 31: Optimal K = 3, Variance explained = 0.5195
+Layer 19, Head 0: Optimal K = 2, Variance explained = 0.3654
+Layer 19, Head 3: Optimal K = 5, Variance explained = 0.7748
+Layer 19, Head 24: Optimal K = 4, Variance explained = 0.7053
+Warning: Optimal K (1) is at the boundary of search range for Layer 19, Head 28. Consider expanding the search range.
+Layer 19, Head 28: Optimal K = 1, Variance explained = 0.1027
+Layer 19, Head 31: Optimal K = 2, Variance explained = 0.4700
+Layer 11, Head 13: Optimal K = 2, Variance explained = 0.2856
+Warning: Optimal K (1) is at the boundary of search range for Layer 11, Head 25. Consider expanding the search range.
+Layer 11, Head 25: Optimal K = 1, Variance explained = 0.1500
+Layer 20, Head 6: Optimal K = 2, Variance explained = 0.4420
+Layer 20, Head 29: Optimal K = 2, Variance explained = 0.5146
+Layer 20, Head 36: Optimal K = 2, Variance explained = 0.2410
+Layer 21, Head 2: Optimal K = 3, Variance explained = 0.4012
+Layer 21, Head 3: Optimal K = 2, Variance explained = 0.2980
+Layer 7, Head 23: Optimal K = 2, Variance explained = 0.3873
+Layer 7, Head 26: Optimal K = 2, Variance explained = 0.2310
+Warning: Optimal K (1) is at the boundary of search range for Layer 7, Head 33. Consider expanding the search range.
+Layer 7, Head 33: Optimal K = 1, Variance explained = 0.2262
+Warning: Optimal K (1) is at the boundary of search range for Layer 5, Head 8. Consider expanding the search range.
+Layer 5, Head 8: Optimal K = 1, Variance explained = 0.2582
+Warning: Optimal K (1) is at the boundary of search range for Layer 5, Head 31. Consider expanding the search range.
+Layer 5, Head 31: Optimal K = 1, Variance explained = 0.1717
+Layer 30, Head 0: Optimal K = 2, Variance explained = 0.2758
+Layer 30, Head 3: Optimal K = 3, Variance explained = 0.5557
+Warning: Optimal K (1) is at the boundary of search range for Layer 23, Head 17. Consider expanding the search range.
+Layer 23, Head 17: Optimal K = 1, Variance explained = 0.2110
+Layer 23, Head 23: Optimal K = 3, Variance explained = 0.5624
+Layer 23, Head 32: Optimal K = 2, Variance explained = 0.4380
+Layer 24, Head 12: Optimal K = 2, Variance explained = 0.3996
+Layer 24, Head 23: Optimal K = 4, Variance explained = 0.7633
+Layer 28, Head 16: Optimal K = 4, Variance explained = 0.6887
+Layer 10, Head 2: Optimal K = 3, Variance explained = 0.7144
+Warning: Optimal K (1) is at the boundary of search range for Layer 10, Head 18. Consider expanding the search range.
+Layer 10, Head 18: Optimal K = 1, Variance explained = 0.0879
+Layer 10, Head 39: Optimal K = 2, Variance explained = 0.3260
+Layer 18, Head 11: Optimal K = 2, Variance explained = 0.2102
+Layer 14, Head 4: Optimal K = 6, Variance explained = 0.8388
+Layer 14, Head 36: Optimal K = 5, Variance explained = 0.8324
+Layer 22, Head 29: Optimal K = 3, Variance explained = 0.6093
+Layer 26, Head 2: Optimal K = 4, Variance explained = 0.6787
+Layer 6, Head 3: Optimal K = 3, Variance explained = 0.6196
+Layer 37, Head 13: Optimal K = 2, Variance explained = 0.3096
+Layer 27, Head 4: Optimal K = 2, Variance explained = 0.2929
+Layer 29, Head 9: Optimal K = 2, Variance explained = 0.3415
+Layer 31, Head 15: Optimal K = 3, Variance explained = 0.6474
+Warning: Optimal K (1) is at the boundary of search range for Layer 25, Head 4. Consider expanding the search range.
+Layer 25, Head 4: Optimal K = 1, Variance explained = 0.0926
+Layer 39, Head 1: Optimal K = 4, Variance explained = 0.6413
+Layer 4, Head 25: Optimal K = 2, Variance explained = 0.3929
+Layer 9, Head 19: Optimal K = 2, Variance explained = 0.6035
