@@ -85,13 +85,14 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
         var_explained = (s**2) / np.sum(s**2)
         # 计算累积解释方差
         cumulative_var_explained = np.cumsum(var_explained)
-        
         # 找到满足阈值的最小K值
         K_var = np.argmax(cumulative_var_explained >= variance_threshold) + 1
         
         # 定义搜索范围
-        K_min = max(1, int(K_var/2))
-        K_max = min(s.shape[0], int(1.5 * K_var))
+        # K_min = max(1, int(K_var/2))
+        # K_max = min(s.shape[0], int(1.5 * K_var))
+        K_min = 1
+        K_max = s.shape[0] - 1
         
         # 阶段2: 使用贝叶斯信息准则(BIC)在搜索范围内找到最优K
         best_K = K_min
@@ -118,6 +119,7 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
         
         # 保存最优K值
         svd_K_dict[key] = best_K
+        
         print(f"Layer {layer_no}, Head {head_no}: Optimal K = {best_K}, Variance explained = {cumulative_var_explained[best_K-1]:.4f}")
     else:
         # 如果不优化K，默认使用固定值64（与原始DRESS框架一致）
@@ -244,5 +246,7 @@ for i in range(len(questions)):
     dict["model_path"] = args.model_path
     output_data.append(dict)
 ###########################
-with open("result.json", 'w', encoding='utf-8') as new_file:
+with open("result_testing.json", 'w', encoding='utf-8') as new_file:
     json.dump(output_data, new_file, ensure_ascii=False, indent=4)
+
+# python generate.py --model_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/edited_model/Qwen1.5-14B-Chat_dataset_DRC_seed_42_top_64_heads_alpha_3.0" --asset_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features" --feature_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features" --optimize_K

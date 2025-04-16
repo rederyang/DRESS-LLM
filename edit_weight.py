@@ -1,4 +1,4 @@
-# python edit_weight.py --model_name Qwen1.5-14B-Chat --dataset_name DRC --activation_path "" --label_path "" --model_dir "/data/CharacterAI/PretainedModels/Qwen1.5-14B-Chat" --num_heads 64 --alpha 3 --save_dir "path/to/save/dir"
+# python edit_weight.py --model_name Qwen1.5-14B-Chat --dataset_name DRC --activation_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features/Qwen1.5-14B-Chat_DRC_head_wise.npy" --label_path "/scratch/eecs556w25_class_root/eecs556w25_class/haojd/features/Qwen1.5-14B-Chat_DRC_labels.npy" --model_dir "models/Qwen1.5-14B-Chat" --num_heads 64 --alpha 3
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -60,23 +60,25 @@ def main():
     model = qwen2.Qwen2ForCausalLM.from_pretrained(MODEL, low_cpu_mem_usage=True, torch_dtype=torch.float16, device_map="auto")
 
     # define number of layers and heads
-    num_layers = model.config.num_hidden_layers
-    num_heads = model.config.num_attention_heads
+    num_layers = model.config.num_hidden_layers #40
+    num_heads = model.config.num_attention_heads #40
+    # print(model.config)
 
     # load activations 
     print("load activations")
     head_wise_activations = np.load(f"{args.activation_path}")
     labels = np.load(f"{args.label_path}")
     head_wise_activations = rearrange(head_wise_activations, 'b l (h d) -> b l h d', h = num_heads)
-    print(head_wise_activations.shape)
+    print(head_wise_activations.shape) #(8178, 40, 40, 128)
     
     dataset_len = head_wise_activations.shape[0] // 2
+    print(dataset_len) # 4089
 
     # tuning dataset: no labels used, just to get std of activations along the direction
     tuning_activations = np.load(f"{args.activation_path}")
     tuning_activations = rearrange(tuning_activations, 'b l (h d) -> b l h d', h = num_heads)
     tuning_labels = np.load(f"{args.label_path}")
-
+###########################
     separated_head_wise_activations, separated_labels, idxs_to_split_at = get_separated_activations(labels, head_wise_activations)
 
     train_idxs = np.arange(dataset_len)
