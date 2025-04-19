@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument("--model_dir", type=str, default=None, help='local directory with model data')
     parser.add_argument("--save_dir", type=str, default=None, help='local directory to save activations')
+    parser.add_argument("--sample_method", type=str, default='last', choices=['avg', 'last'], help='avg or last')
     args = parser.parse_args()
 
     MODEL = args.model_dir
@@ -44,7 +45,7 @@ def main():
 
     print("Tokenizing prompts")
     print(len(dataset))
-    prompts, labels = formatter(dataset, tokenizer)
+    prompts, prompt_prefixes, labels = formatter(dataset, tokenizer)
     print(len(prompts), len(labels))
 
     # interleave structure:
@@ -54,11 +55,23 @@ def main():
     all_head_wise_activations = []
 
     print("Getting activations")
+    print("Using activation sample method: ", args.sample_method)
     import gc
-    for prompt in tqdm(prompts):
+    for prompt, prompt_prefix in tqdm(zip(prompts, prompt_prefixes)):
         layer_wise_activations, head_wise_activations, _ = get_llama_activations_bau(model, prompt, device)
-        layer_wise_activations_wanted = layer_wise_activations[:,-1,:].copy()
-        head_wise_activations_wanted = head_wise_activations[:,-1,:].copy()
+        if args.sample_method == 'avg':
+            # extract the response tokens, and take the average activation of them
+            # prompt_prefix shape: (1, prefix_seq_len)
+            len_prompt_prefix = prompt_prefix.shape[1]
+            # layer_wise_activations shape: (1 + layer_num, seq_len, head_dim * head_num)
+            layer_wise_activations_wanted = layer_wise_activations[:, len_prompt_prefix:, :].mean(axis=1).copy()
+            # head_wise_activations shape: (layer_num, seq_len, head_dim * head_num)
+            head_wise_activations_wanted = head_wise_activations[:, len_prompt_prefix:, :].mean(axis=1).copy()
+        elif args.sample_method == 'last':
+            layer_wise_activations_wanted = layer_wise_activations[:,-1,:].copy()
+            head_wise_activations_wanted = head_wise_activations[:,-1,:].copy()
+        else:
+            raise ValueError("Invalid sample method")
         del layer_wise_activations, head_wise_activations, _
         all_layer_wise_activations.append(layer_wise_activations_wanted)
         all_head_wise_activations.append(head_wise_activations_wanted)
