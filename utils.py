@@ -153,6 +153,7 @@ def tokenized_tqa_gen(dataset, tokenizer):
 def tokenized_tqa_gen_DRC(dataset, tokenizer): 
 
     all_prompts = []
+    all_prompt_prefixes = []
     all_labels = []
     for i in range(len(dataset)): 
         question = dataset[i]['question']
@@ -161,21 +162,28 @@ def tokenized_tqa_gen_DRC(dataset, tokenizer):
             answer = dataset[i]['correct_answers'][j]
             prompt = format_truthfulqa_DRC(question, answer)
             prompt = tokenizer(prompt, return_tensors = 'pt').input_ids
+            prompt_prefix = format_truthfulqa_DRC(question, "")
+            prompt_prefix = tokenizer(prompt_prefix, return_tensors = 'pt').input_ids
             all_prompts.append(prompt)
+            all_prompt_prefixes.append(prompt_prefix)
             all_labels.append(1)
         
         for j in range(len(dataset[i]['incorrect_answers'])):
             answer = dataset[i]['incorrect_answers'][j]
             prompt = format_truthfulqa_DRC(question, answer)
             prompt = tokenizer(prompt, return_tensors = 'pt').input_ids
+            prompt_prefix = format_truthfulqa_DRC(question, "")
+            prompt_prefix = tokenizer(prompt_prefix, return_tensors = 'pt').input_ids
             all_prompts.append(prompt)
+            all_prompt_prefixes.append(prompt_prefix)
             all_labels.append(0)
         
-    return all_prompts, all_labels
+    return all_prompts, all_prompt_prefixes, all_labels
 
 def tokenized_tqa_gen_Shakespeare(dataset, tokenizer): 
 
     all_prompts = []
+    all_prompt_prefixes = []
     all_labels = []
     for i in range(len(dataset)): 
         question = dataset[i]['question']
@@ -184,17 +192,23 @@ def tokenized_tqa_gen_Shakespeare(dataset, tokenizer):
             answer = dataset[i]['correct_answers'][j]
             prompt = format_truthfulqa_Shakespeare(question, answer)
             prompt = tokenizer(prompt, return_tensors = 'pt').input_ids
+            prompt_prefix = format_truthfulqa_Shakespeare(question, "")
+            prompt_prefix = tokenizer(prompt_prefix, return_tensors = 'pt').input_ids
             all_prompts.append(prompt)
+            all_prompt_prefixes.append(prompt_prefix)
             all_labels.append(1)
         
         for j in range(len(dataset[i]['incorrect_answers'])):
             answer = dataset[i]['incorrect_answers'][j]
             prompt = format_truthfulqa_Shakespeare(question, answer)
             prompt = tokenizer(prompt, return_tensors = 'pt').input_ids
+            prompt_prefix = format_truthfulqa_Shakespeare(question, "")
+            prompt_prefix = tokenizer(prompt_prefix, return_tensors = 'pt').input_ids
             all_prompts.append(prompt)
+            all_prompt_prefixes.append(prompt_prefix)
             all_labels.append(0)
         
-    return all_prompts, all_labels
+    return all_prompts, all_prompt_prefixes, all_labels
 
 def get_llama_activations_bau(model, prompt, device): 
 
