@@ -18,7 +18,21 @@ from sklearn.decomposition import PCA
 
 import sys
 sys.path.append('../')
-from utils import alt_tqa_evaluate, flattened_idx_to_layer_head, layer_head_to_flattened_idx, get_interventions_dict, get_top_heads, get_separated_activations, get_com_directions, get_top_heads_group_lasso, get_top_heads_heuristic
+from utils import (
+    alt_tqa_evaluate,
+    flattened_idx_to_layer_head,
+    layer_head_to_flattened_idx,
+    get_interventions_dict,
+    get_top_heads,
+    get_separated_activations,
+    get_com_directions,
+    get_top_heads_group_lasso,
+    get_top_heads_heuristic,
+    get_top_heads_heuristic_v2,
+    get_top_heads_mmd,
+    get_top_heads_lda_ratio,
+    get_top_heads_cluster
+)
 import llama
 import qwen2
 
@@ -38,7 +52,7 @@ def main():
     parser.add_argument('--use_center_of_mass', action='store_true', help='use center of mass direction', default=False)
     parser.add_argument('--use_random_dir', action='store_true', help='use random direction', default=False)
     parser.add_argument('--collaborative_selection', action='store_true', help='use collaborative selection', default=False)
-    parser.add_argument('--selection_method', type=str, choices=['group_lasso', 'linear_probing', 'heuristic'], default='linear_probing', help='head selection method')
+    parser.add_argument('--selection_method', type=str, choices=['group_lasso', 'linear_probing', 'heuristic', 'heuristic_v2', 'mmd', 'lda_ratio', 'cluster'], default='linear_probing', help='head selection method')
     parser.add_argument('--l0_layer', type=int, default=0, help='start layer')
     parser.add_argument('--ln_layer', type=int, default=40, help='end layer')
     parser.add_argument('--select_svd_components', type=int, default=64, help='number of SVD components to select')
@@ -90,6 +104,7 @@ def main():
 
     # get directions
     com_directions = None
+    print("selection method: ", args.selection_method)
     if args.selection_method == 'group_lasso':
         top_heads, probes = get_top_heads_group_lasso(train_set_idxs, 
                                                       val_set_idxs, 
@@ -128,12 +143,70 @@ def main():
                                                     pa_threshold=0.6,
                                                     ds_percentile_threshold=0.1,
                                                     ds_metric='norm')
+    elif args.selection_method == 'heuristic_v2':
+        top_heads, probes = get_top_heads_heuristic_v2(train_set_idxs,
+                                                        val_set_idxs,
+                                                        separated_head_wise_activations,
+                                                        separated_labels,
+                                                        num_layers,
+                                                        num_heads,
+                                                        args.seed,
+                                                        args.num_heads,
+                                                        args.use_random_dir,
+                                                        ds_percentile_threshold=0.1,
+                                                        dc_threshold=0.6,
+                                                        ds_metric='norm')
+    elif args.selection_method == 'mmd':
+        top_heads, probes = get_top_heads_mmd(train_set_idxs,
+                                              val_set_idxs,
+                                              separated_head_wise_activations,
+                                              separated_labels,
+                                              num_layers,
+                                              num_heads,
+                                              args.seed,
+                                              args.num_heads,
+                                              args.use_random_dir,
+                                              use_median_heuristic=True,
+                                              default_sigma=1.0,
+                                              mmd_batch_size=None)
+    elif args.selection_method == 'lda_ratio':
+        top_heads, probes = get_top_heads_lda_ratio(train_set_idxs,
+                                                    val_set_idxs,
+                                                    separated_head_wise_activations,
+                                                    separated_labels,
+                                                    num_layers,
+                                                    num_heads,
+                                                    args.seed,
+                                                    args.num_heads,
+                                                    args.use_random_dir,
+                                                    epsilon=1e-9)
+    elif args.selection_method == 'cluster':
+        top_heads, probes = get_top_heads_cluster(train_set_idxs,
+                                                  val_set_idxs,
+                                                  separated_head_wise_activations,
+                                                  separated_labels,
+                                                  num_layers,
+                                                  num_heads,
+                                                  args.seed,
+                                                  args.num_heads,
+                                                  args.use_random_dir,
+                                                  top_k_consistency=400,
+                                                  epsilon=1e-9)
+
     os.makedirs(args.save_dir, exist_ok=True)
     np.save(os.path.join(args.save_dir, f'probes_{args.num_heads}_{args.alpha:.1f}.npy'),probes)
     np.save(os.path.join(args.save_dir, f'top_heads_{args.num_heads}_{args.alpha:.1f}.npy'),top_heads)
 
     # 这里的interventions中得到的intervention向量实际上没有用到
     interventions = get_interventions_dict(top_heads, probes, tuning_activations, num_heads, args.use_center_of_mass, args.use_random_dir, com_directions)
+
+    # print selected layers and heads
+    for intervention in sorted(interventions.keys(), key=lambda x: int(x.split('.')[2])):
+        print(intervention)
+        print([
+            head_no
+            for head_no, _, _ in interventions[intervention]
+        ])
 
     activations_dict = {} # save
     for head_out_name, list_int_vec in tqdm(interventions.items()):
@@ -165,6 +238,7 @@ def main():
     if os.path.exists(save_folder):
       shutil.rmtree(save_folder)
     os.makedirs(save_folder)
+    print("saving model to", save_folder)
     model.config.oproj_bias = True
     model.save_pretrained(save_folder, safe_serialization=False, max_shard_size="10GB")
     tokenizer.save_pretrained(save_folder)
