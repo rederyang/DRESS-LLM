@@ -56,28 +56,12 @@ def main():
     print("Getting activations")
     import gc
     for prompt in tqdm(prompts):
-        ''' Input (5120)
-        1. Self-Attention Block:
-        → Split to heads (40 × 128)
-        → Attention
-        → Concatenate (5120)
-        → Linear projection (5120) ← head_wise_hidden_states
-        → Add & LayerNorm
-        ↓
-        2. MLP Block:
-        → FFN
-        → Linear projection
-        → Add & LayerNorm ← hidden_states
-        '''
-
-        # output for each layer:layer_wise_activations [num_layers, sequence_length, hidden_size]
-        # output for each head: head_wise_activations [num_heads, sequence_length, head_dim * num_heads = hidden_size] 
         layer_wise_activations, head_wise_activations, _ = get_llama_activations_bau(model, prompt, device)
-        layer_wise_activations_wanted = layer_wise_activations[:,-1,:].copy() # only last token [num_layers, hidden_size]
-        head_wise_activations_wanted = head_wise_activations[:,-1,:].copy() # only last token [num_heads, hidden_size]
+        layer_wise_activations_wanted = layer_wise_activations[:,-1,:].copy()
+        head_wise_activations_wanted = head_wise_activations[:,-1,:].copy()
         del layer_wise_activations, head_wise_activations, _
         all_layer_wise_activations.append(layer_wise_activations_wanted)
-        all_head_wise_activations.append(head_wise_activations_wanted) # [num_prompts, num_heads, hidden_size]
+        all_head_wise_activations.append(head_wise_activations_wanted)
 
         gc.collect()
 
