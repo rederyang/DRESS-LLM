@@ -26,6 +26,7 @@ parser.add_argument('--optimize_K', action='store_true', default=False)
 parser.add_argument('--variance_threshold', type=float, default=0.95)
 parser.add_argument('--default_K', type=int, default=64)
 parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'v3', 'v4'], default='v2')
+parser.add_argument('--ema_decay', type=float, default=None)
 args = parser.parse_args()
 
 a = 'top_'
@@ -388,10 +389,11 @@ def my_generate(w0, q_tokens, inputs):
                 break
     return sequence
 
-def my_generate_v2(w0, q_tokens, inputs):
+def my_generate_v2(w0, q_tokens, inputs, ema_decay=None):
     """
     使用k-v cache
     没有pre-edit
+    使用ema维护当前的activations
     """
     max_length = 600
 
@@ -405,6 +407,11 @@ def my_generate_v2(w0, q_tokens, inputs):
         outputs = model(**inputs, use_cache=True, output_hidden_states=True)
         next_token_logits = outputs.logits[:, -1, :]
         past_key_values = outputs.past_key_values
+
+    # initialize ema states
+    if ema_decay is not None:
+        # outputs.hidden_states is a tuple of [(batch_size, sequence_length, hidden_dim), ...]
+        ema_hidden_states = tuple(state[:, -1:, :].clone() for state in outputs.hidden_states)
 
     sequence = []
     for i in range(max_length):
@@ -420,8 +427,22 @@ def my_generate_v2(w0, q_tokens, inputs):
         if token.cpu().numpy()[0][0] == 151643 or token.cpu().numpy()[0][0] == 151644 or token.cpu().numpy()[0][0] == 151645: 
             break
 
+        if ema_decay is not None:
+            # update ema states
+            ema_hidden_states = tuple(
+                (1 - ema_decay) * ema_state + ema_decay * cur_state[:, -1:, :]
+                for ema_state, cur_state in zip(ema_hidden_states, outputs.hidden_states)
+            )
+            # update cur_states
+            cur_states = ema_hidden_states.clone()
+        else:
+            cur_states = tuple(
+                cur_state[:, -1:, :]
+                for cur_state in outputs.hidden_states
+            )
+
         # 模型编辑
-        get_activations_v3(outputs.hidden_states)
+        get_activations_v3(cur_states)
 
         # 增量 forward，只输入新 token 和缓存
         with torch.no_grad():
@@ -561,7 +582,11 @@ print("分解完毕")
 if args.generate_method == 'baseline':
     generate_method = my_generate
 elif args.generate_method == 'v2':
-    generate_method = my_generate_v2
+    def my_generate_v2_wrapper(w0, q_tokens, inputs):
+        return my_generate_v2(w0, q_tokens, inputs, ema_decay=args.ema_decay)
+    if args.ema_decay is not None:
+        print(f"使用ema_decay={args.ema_decay}的my_generate_v2")
+    generate_method = my_generate_v2_wrapper
 elif args.generate_method == 'v3':
     generate_method = my_generate_v3
 elif args.generate_method == 'v4':
