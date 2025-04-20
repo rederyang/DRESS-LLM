@@ -20,6 +20,7 @@ import math
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', type=str)
 parser.add_argument('--dataset_path', type=str)
+parser.add_argument('--output_path', type=str)
 parser.add_argument('--feature_path', type=str)
 parser.add_argument('--asset_path', type=str)
 parser.add_argument('--optimize_K', action='store_true', default=False)
@@ -569,6 +570,8 @@ def my_generate_v4(w0, q_tokens, inputs, period=3):
 
 
 print("为所有head上的转向向量作svd分解并保存")
+if args.optimize_K:
+    print("使用自适应K")
 for layer_no, heads in activations_dict.items():
         for head_no, vector in activations_dict[layer_no].items():
             head_activations = activations[:,layer_no,head_no,:]
@@ -622,6 +625,9 @@ for i in range(len(questions)):
     dict["model_path"] = args.model_path
     output_data.append(dict)
 ###########################
-with open(os.path.join(args.asset_path, "result.json"), 'w', encoding='utf-8') as new_file:
+output_path = args.output_path
+assert output_path[-5:] == ".json"
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+with open(output_path, 'w', encoding='utf-8') as new_file:
     json.dump(output_data, new_file, ensure_ascii=False, indent=4)
-print("生成结果已保存至", os.path.join(args.asset_path, "result.json"))
+print("生成结果已保存至", output_path)
