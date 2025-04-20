@@ -147,6 +147,13 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
     
     return
 
+"""
+生成相关函数调用依赖关系:
+my_generate -> get_activations -> get_steering_vector
+my_generate_v2 -> get_activations_v3 -> get_steering_vector_simple_torch √
+my_generate_v3 -> get_activations_v2 -> get_steering_vector_simple
+my_generate_v4 -> get_activations_v2 -> get_steering_vector_simple
+"""
 
 def get_steering_vector(layer_no, head_no, vector, cur_activations):
     # vector: 参考steering vector
@@ -296,7 +303,6 @@ def get_activations_v2(hidden_states):
 
 def get_activations_v3(hidden_states):
     """
-    直接修改hidden_states, 在当前activations上加上steering_vector偏置，不改变模型权重
     纯torch实现, 不使用numpy
     hidden_states: A tuple/list of tensors, output from each layer of the model.
                    Typically hidden_states[0] is embedding output.
@@ -305,7 +311,6 @@ def get_activations_v3(hidden_states):
     # Make sure hidden_states is mutable if we want to modify in-place
     # If it's a tuple, convert to list
     hidden_states_list = list(hidden_states)
-    modified = False # Flag to check if any modification happened
 
     # Iterate through layers specified in activations_dict
     for layer_no, heads in activations_dict_torch.items():
@@ -344,18 +349,11 @@ def get_activations_v3(hidden_states):
             # Store in displacement array
             displacement[head_no] = s_vector
 
-        # Reshape the layer's displacement to (hidden_dim)
-        layer_displacement = rearrange(displacement, 'h d -> (h d)')
+        # modify the model bias
+        displacement = rearrange(displacement, 'h d -> (h d)')
+        bias_tobe = F.linear(displacement, model.model.layers[layer_no].self_attn.o_proj.weight)
+        model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(bias_tobe)
 
-        # Modify the hidden state in the list
-        # Ensure the operation is compatible with autograd if gradients are needed,
-        # though typically during generation, we operate under torch.no_grad()
-        hidden_states_list[layer_index][:, -1, :] = hidden_states_list[layer_index][:, -1, :] + layer_displacement
-        modified = True
-
-    # Return the modified hidden_states (as a tuple, matching typical model output)
-    # If no modifications were made, return the original tuple to avoid unnecessary conversion
-    return tuple(hidden_states_list) if modified else hidden_states
 
 def my_generate(w0, q_tokens, inputs):
     """原本的生成函数"""
