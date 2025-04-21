@@ -79,7 +79,7 @@ svd_Vh_dict = {}
 svd_Vh_dict_torch = {}
 svd_K_dict = {}
 
-def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold=0.95, default_K=64):
+def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold=0.95, default_K=64, constrain_range=False):
     from scipy.linalg import svd
     U, s, Vh = svd(X, full_matrices=False)
     '''
@@ -108,8 +108,12 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
         K_var = np.argmax(cumulative_var_explained >= variance_threshold) + 1
         
         # 定义搜索范围
-        K_min = max(1, int(K_var/2))
-        K_max = min(s.shape[0], int(1.5 * K_var))
+        if constrain_range:
+            K_min = max(1, int(K_var/2))
+            K_max = min(s.shape[0], int(1.5 * K_var))
+        else:
+            K_min = 1
+            K_max = s.shape[0] - 1
         
         # 阶段2: 使用贝叶斯信息准则(BIC)在搜索范围内找到最优K
         best_K = K_min
