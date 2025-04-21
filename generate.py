@@ -26,7 +26,7 @@ parser.add_argument('--asset_path', type=str)
 parser.add_argument('--optimize_K', action='store_true', default=False)
 parser.add_argument('--variance_threshold', type=float, default=0.95)
 parser.add_argument('--default_K', type=int, default=64)
-parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'v3', 'v4'], default='v2')
+parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'zero', 'zero_legacy', 'v3', 'v4'], default='v2')
 parser.add_argument('--ema_decay', type=float, default=None)
 args = parser.parse_args()
 
@@ -152,7 +152,9 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
 """
 生成相关函数调用依赖关系:
 my_generate -> get_activations -> get_steering_vector
-my_generate_v2 -> get_activations_v3 -> get_steering_vector_simple_torch √
+my_generate_v2 -> get_activations_v3 -> get_steering_vector_simple_torch
+my_generate_zero -> get_activations_v3 -> get_steering_vector_simple_torch
+my_generate_zero_legacy -> get_activations_v3 -> get_steering_vector_simple_torch
 my_generate_v3 -> get_activations_v2 -> get_steering_vector_simple
 my_generate_v4 -> get_activations_v2 -> get_steering_vector_simple
 """
@@ -356,6 +358,11 @@ def get_activations_v3(hidden_states):
         bias_tobe = F.linear(displacement, model.model.layers[layer_no].self_attn.o_proj.weight)
         model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(bias_tobe)
 
+def reset_model(model):
+    """重置模型bias为0"""
+    for layer_no, heads in activations_dict.items():
+        zero_bias = torch.zeros_like(model.model.layers[layer_no].self_attn.o_proj.bias)
+        model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(zero_bias)
 
 def my_generate(w0, q_tokens, inputs):
     """原本的生成函数"""
@@ -455,6 +462,151 @@ def my_generate_v2(w0, q_tokens, inputs, ema_decay=None):
             )
             next_token_logits = outputs.logits[:, -1, :]
             past_key_values = outputs.past_key_values
+
+    return sequence
+
+
+def my_generate_zero(w0, q_tokens, inputs):
+    """
+    使用k-v cache
+    zero bias下计算steering vector
+    base和style forward使用同一套kv cache
+    """
+    max_length = 600
+
+    model.eval()
+    model.config.use_cache = True
+
+    # 预备阶段: reset - dummy forward - edit - style forward (针对整个input sequence)
+    # 重置模型bias
+    reset_model(model)
+
+    # 获取bias=0情况下的activations (base forward)
+    with torch.no_grad():
+        outputs = model(**inputs, use_cache=True, output_hidden_states=True)
+
+    # 首次模型编辑
+    get_activations_v3(outputs.hidden_states)
+
+    # 首次forward (style forward)
+    with torch.no_grad():
+        outputs = model(**inputs, use_cache=True, output_hidden_states=True)
+        next_token_logits = outputs.logits[:, -1, :]
+        past_key_values = outputs.past_key_values
+
+    # 开始自回归生成
+    sequence = []
+    for i in range(max_length):
+        # greedy decoding
+        token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+
+        # update generation result
+        sequence.append(token.cpu().numpy()[0][0])
+
+        # 遇到结束符，停止生成
+        if token.cpu().numpy()[0][0] == 151643 or token.cpu().numpy()[0][0] == 151644 or token.cpu().numpy()[0][0] == 151645: 
+            break
+
+        # 步骤: reset - dummy forward - edit - style forward
+        # 重置模型bias
+        reset_model(model)
+
+        # dummy forward
+        with torch.no_grad():
+            outputs = model(
+                input_ids=token,
+                past_key_values=past_key_values,  # note that the kv cache is stylized
+                use_cache=True,
+                output_hidden_states=True
+            )
+
+        # 模型编辑
+        get_activations_v3(outputs.hidden_states)
+
+        # style forward
+        with torch.no_grad():
+            outputs = model(
+                input_ids=token,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=True
+            )
+            next_token_logits = outputs.logits[:, -1, :]
+            past_key_values = outputs.past_key_values
+
+    return sequence
+
+
+def my_generate_zero_legacy(w0, q_tokens, inputs):
+    """
+    使用k-v cache
+    zero bias下计算steering vector
+    base 和 style forward 使用独立的kv cache
+    """
+    max_length = 600
+
+    model.eval()
+    model.config.use_cache = True
+
+    # 预备阶段: reset - dummy forward - edit - style forward (针对整个input sequence)
+    # 重置模型bias
+    reset_model(model)
+
+    # 获取bias=0情况下的activations (base forward)
+    with torch.no_grad():
+        # IMPORTANT!!!: base forward should use q_tokens, not inputs !!!
+        outputs = model(q_tokens, use_cache=True, output_hidden_states=True)
+        base_past_key_values = outputs.past_key_values
+
+    # 首次模型编辑
+    get_activations_v3(outputs.hidden_states)
+
+    # 首次forward (style forward)
+    with torch.no_grad():
+        outputs = model(**inputs, use_cache=True, output_hidden_states=True)
+        next_token_logits = outputs.logits[:, -1, :]
+        style_past_key_values = outputs.past_key_values
+
+    # 开始自回归生成
+    sequence = []
+    for i in range(max_length):
+        # greedy decoding
+        token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+
+        # update generation result
+        sequence.append(token.cpu().numpy()[0][0])
+
+        # 遇到结束符，停止生成
+        if token.cpu().numpy()[0][0] == 151643 or token.cpu().numpy()[0][0] == 151644 or token.cpu().numpy()[0][0] == 151645: 
+            break
+
+        # 步骤: reset - dummy forward - edit - style forward
+        # 重置模型bias
+        reset_model(model)
+
+        # dummy forward
+        with torch.no_grad():
+            outputs = model(
+                input_ids=token,
+                past_key_values=base_past_key_values,
+                use_cache=True,
+                output_hidden_states=True
+            )
+            base_past_key_values = outputs.past_key_values
+
+        # 模型编辑
+        get_activations_v3(outputs.hidden_states)
+
+        # style forward
+        with torch.no_grad():
+            outputs = model(
+                input_ids=token,
+                past_key_values=style_past_key_values,
+                use_cache=True,
+                output_hidden_states=True
+            )
+            next_token_logits = outputs.logits[:, -1, :]
+            style_past_key_values = outputs.past_key_values
 
     return sequence
 
@@ -590,6 +742,10 @@ elif args.generate_method == 'v2':
     if args.ema_decay is not None:
         print(f"使用ema_decay={args.ema_decay}的my_generate_v2")
     generate_method = my_generate_v2_wrapper
+elif args.generate_method == 'zero':
+    generate_method = my_generate_zero
+elif args.generate_method == 'zero_legacy':
+    generate_method = my_generate_zero_legacy
 elif args.generate_method == 'v3':
     generate_method = my_generate_v3
 elif args.generate_method == 'v4':
