@@ -191,7 +191,7 @@ def get_steering_vector_simple(layer_no, head_no, vector, cur_activations):
     diff_strength = np.dot(Vh, correct_activations.T - cur_activations.T)
 
     # combine
-    strength = base_strength * (1 + 0.5 * diff_strength)
+    strength = base_strength * (1 + 0.5 * np.sign(base_strength) * diff_strength)
 
     steering_vector = np.dot(Vh.T, strength)
 
@@ -224,7 +224,7 @@ def get_steering_vector_simple_torch(layer_no, head_no, vector, cur_activations)
     diff_strength = torch.matmul(Vh, correct_activations - cur_activations)
 
     # combine
-    strength = base_strength * (1 + 0.5 * diff_strength)
+    strength = base_strength * (1 + 0.5 * torch.sign(base_strength) * diff_strength)
 
     steering_vector = torch.matmul(Vh.T, strength)
 
