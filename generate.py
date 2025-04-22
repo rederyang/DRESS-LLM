@@ -26,7 +26,7 @@ parser.add_argument('--asset_path', type=str)
 parser.add_argument('--optimize_K', action='store_true', default=False)
 parser.add_argument('--variance_threshold', type=float, default=0.95)
 parser.add_argument('--default_K', type=int, default=64)
-parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'zero', 'zero_legacy', 'v3', 'v4'], default='v2')
+parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'zero', 'zero_legacy', 'v3', 'v4', 'exp'], default='v2')
 parser.add_argument('--ema_decay', type=float, default=None)
 parser.add_argument('--KNN_neighbor_num', type=int, default=None)
 args = parser.parse_args()
@@ -412,6 +412,33 @@ def reset_model(model):
     for layer_no, heads in activations_dict.items():
         zero_bias = torch.zeros_like(model.model.layers[layer_no].self_attn.o_proj.bias)
         model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(zero_bias)
+
+# FIXME: 选一种作为评估fl, sp的upper bound方法
+def my_generate_exp(w0, q_tokens, inputs, global_editing=True):
+    """不使用模型编辑的生成函数"""
+    max_new_tokens = 600  # 生成新 token 的最大数量
+    eos_token_ids = [151643, 151644, 151645] 
+
+    if not global_editing:
+        reset_model(model)  # 重置模型bias
+
+    model.eval()  # 确保模型处于评估模式
+    model.config.use_cache = True # 启用 KV 缓存以提高效率
+
+    with torch.no_grad():
+        # 直接调用 model.generate
+        generated_ids = model.generate(
+            inputs["input_ids"],
+            max_new_tokens=max_new_tokens,
+            eos_token_id=eos_token_ids, # 可以传递 ID 列表作为停止条件
+            do_sample=False,           # 使用贪心解码 (greedy decoding)
+            pad_token_id=tokenizer.eos_token_id # 如果需要处理 padding，通常设为 eos_token_id
+        )
+
+    input_length = inputs["input_ids"].shape[1]
+    output_sequence = generated_ids[0, input_length:].cpu().tolist() 
+
+    return output_sequence
 
 def my_generate(w0, q_tokens, inputs):
     """原本的生成函数"""
@@ -799,6 +826,8 @@ elif args.generate_method == 'v3':
     generate_method = my_generate_v3
 elif args.generate_method == 'v4':
     generate_method = my_generate_v4
+elif args.generate_method == 'exp':
+    generate_method = my_generate_exp
 
 print(f"使用{args.generate_method}方法生成")
 if args.KNN_neighbor_num is not None:
