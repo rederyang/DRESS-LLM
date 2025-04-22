@@ -800,6 +800,8 @@ def my_generate_v4(w0, q_tokens, inputs, period=3):
 print("为所有head上的转向向量作svd分解并保存")
 if args.optimize_K:
     print("使用自适应K")
+else:
+    print("使用默认K", args.default_K)
 for layer_no, heads in activations_dict.items():
         for head_no, vector in activations_dict[layer_no].items():
             head_activations = activations[:,layer_no,head_no,:]
@@ -833,8 +835,8 @@ print(f"使用{args.generate_method}方法生成")
 if args.KNN_neighbor_num is not None:
     print(f"使用KNN计算steering vector, 邻居数量: {args.KNN_neighbor_num}")
 
-
-tik = time.time()
+cum_time = 0
+cum_token = 0
 for index, question in enumerate(questions):
     
     q_tokens = tokenizer(question, return_tensors = 'pt').input_ids
@@ -843,14 +845,21 @@ for index, question in enumerate(questions):
     inputs = tokenizer(question, return_tensors='pt')
     inputs = {k: v.to(model.device) for k, v in inputs.items()} 
     
+    tik = time.time()
     sequence = generate_method(None, q_tokens.to('cuda:0'), inputs)
+    time_cost = time.time() - tik
+
+    cum_time += time_cost
+    cum_token += len(sequence)
 
     answer = tokenizer.decode(sequence, skip_special_tokens=True)
     print(index, answer)
     answers.append(answer)
 
-tik = time.time() - tik
-print(f"生成{len(questions)}个问题，用时{tik}秒")
+print(f"生成问题数: {len(questions)}\n"
+      f"共生成token数: {cum_token}\n"
+      f"用时: {cum_time} s\n"
+      f"平均生成速度: {cum_token/cum_time} token/s")
 
 
 output_data = []
