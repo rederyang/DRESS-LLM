@@ -28,6 +28,7 @@ parser.add_argument('--variance_threshold', type=float, default=0.95)
 parser.add_argument('--default_K', type=int, default=64)
 parser.add_argument('--generate_method', type=str, choices=['baseline', 'v2', 'zero', 'zero_legacy', 'v3', 'v4'], default='v2')
 parser.add_argument('--ema_decay', type=float, default=None)
+parser.add_argument('--KNN_neighbor_num', type=int, default=None)
 args = parser.parse_args()
 
 a = 'top_'
@@ -72,6 +73,8 @@ activations = np.load(args.feature_path + "/Qwen1.5-14B-Chat_DRC_head_wise.npy")
 activations = rearrange(activations, 'b l (h d) -> b l h d', h = num_heads)
 # activations_torch: 转为torch
 activations_torch = torch.tensor(activations, device=model.device)
+correct_activations_torch = activations_torch[::2, :, :, :]  # shape (b, l, h, d)
+incorrect_activations_torch = activations_torch[1::2, :, :, :]  # shape (b, l, h, d)
 mean_correct_activations_torch = torch.mean(activations_torch[::2, :, :, :], dim=0) # mean correct(target) activations
 
 
@@ -79,6 +82,8 @@ mean_correct_activations_torch = torch.mean(activations_torch[::2, :, :, :], dim
 svd_s_dict = {}
 svd_Vh_dict = {}
 svd_Vh_dict_torch = {}
+proj_incorrect_activations = {}
+proj_correct_activations = {}
 svd_K_dict = {}
 
 def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold=0.95, default_K=64, constrain_range=False):
@@ -95,6 +100,9 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
     svd_s_dict[key] = s
     svd_Vh_dict[key] = Vh
     svd_Vh_dict_torch[key] = torch.tensor(Vh, device=model.device, dtype=model.config.torch_dtype)
+    Vh_torch = torch.tensor(Vh, device=model.device, dtype=model.config.torch_dtype)
+    proj_incorrect_activations[key] = torch.matmul(incorrect_activations_torch[:, layer_no, head_no, :], Vh_torch.T)
+    proj_correct_activations[key] = torch.matmul(correct_activations_torch[:, layer_no, head_no, :], Vh_torch.T)
 
     # 确定最优的K
     if optimize_K:
@@ -152,9 +160,9 @@ def svd_decomposition(layer_no, head_no, X, optimize_K=False, variance_threshold
 """
 生成相关函数调用依赖关系:
 my_generate -> get_activations -> get_steering_vector
-my_generate_v2 -> get_activations_v3 -> get_steering_vector_simple_torch
-my_generate_zero -> get_activations_v3 -> get_steering_vector_simple_torch
-my_generate_zero_legacy -> get_activations_v3 -> get_steering_vector_simple_torch
+my_generate_v2 -> get_activations_v3 -> get_steering_vector_simple_torch / get_steering_vector_KNN_torch
+my_generate_zero -> get_activations_v3 -> get_steering_vector_simple_torch / get_steering_vector_KNN_torch
+my_generate_zero_legacy -> get_activations_v3 -> get_steering_vector_simple_torch / get_steering_vector_KNN_torch
 my_generate_v3 -> get_activations_v2 -> get_steering_vector_simple
 my_generate_v4 -> get_activations_v2 -> get_steering_vector_simple
 """
@@ -242,6 +250,44 @@ def get_steering_vector_simple_torch(layer_no, head_no, vector, cur_activations)
     return steering_vector
 
 
+def get_steering_vector_KNN_torch(layer_no, head_no, vector, cur_activations, neighbor_num=256):
+    """
+    使用KNN计算steering vector
+    在风格子空间内, 根据current activations的KNN计算steering vector
+    """
+    key = 'L' + str(layer_no) + 'H' + str(head_no)
+    K = svd_K_dict[key]
+    Vh = svd_Vh_dict_torch[key]
+    Vh = Vh[:K, :]
+    coord_incorrect_activations = proj_incorrect_activations[key][:, :K]
+    coord_correct_activations = proj_correct_activations[key][:, :K]
+    coord_cur_activations = torch.matmul(Vh, cur_activations)  # Vh already selected first K singular vectors
+
+    # 计算current activations在风格子空间内的K个最近邻
+    dist = torch.norm(coord_incorrect_activations - coord_cur_activations, dim=1)
+    _, indices = torch.topk(dist, neighbor_num, largest=False)
+
+    # 收集相邻的incorrect activations及对应的correct activations在风格子空间内的投影
+    coord_correct_activations_of_interest = coord_correct_activations[indices, :]
+    coord_incorrect_activations_of_interest = coord_incorrect_activations[indices, :]
+
+    # 根据neighbor计算base strength
+    base_strength = torch.mean(coord_correct_activations_of_interest - coord_incorrect_activations_of_interest, dim=0)
+
+    # 根据neighbor计算mean correct coord
+    mean_coord_correct_activations_of_interest = torch.mean(coord_correct_activations_of_interest, dim=0)
+
+    # 计算diff strength
+    diff_strength = mean_coord_correct_activations_of_interest - coord_cur_activations
+
+    # combine
+    strength = base_strength * (1 + 0.5 * torch.sign(base_strength) * diff_strength)
+
+    steering_vector = torch.matmul(Vh.T, strength)
+
+    return steering_vector
+
+
 def get_activations(question):
     """编辑模型bias的函数"""
     # prompt = tokenizer_1(question, return_tensors = 'pt').input_ids
@@ -305,7 +351,7 @@ def get_activations_v2(hidden_states):
             model.model.layers[layer_no].self_attn.o_proj.bias = torch.nn.parameter.Parameter(bias_tobe)
     return
 
-def get_activations_v3(hidden_states):
+def get_activations_v3(hidden_states, use_KNN=False):
     """
     纯torch实现, 不使用numpy
     hidden_states: A tuple/list of tensors, output from each layer of the model.
@@ -348,7 +394,10 @@ def get_activations_v3(hidden_states):
             # Calculate steering vector
             # Assuming get_steering_vector_simple takes layer_no, head_no, base_vector (numpy), cur_activations (numpy)
             # and returns the steering vector (torch tensor)
-            s_vector = get_steering_vector_simple_torch(layer_no, head_no, vector, cur_activations) 
+            if use_KNN:
+                s_vector = get_steering_vector_KNN_torch(layer_no, head_no, vector, cur_activations, neighbor_num=args.KNN_neighbor_num) 
+            else:
+                s_vector = get_steering_vector_simple_torch(layer_no, head_no, vector, cur_activations) 
 
             # Store in displacement array
             displacement[head_no] = s_vector
@@ -559,7 +608,7 @@ def my_generate_zero_legacy(w0, q_tokens, inputs):
         base_past_key_values = outputs.past_key_values
 
     # 首次模型编辑
-    get_activations_v3(outputs.hidden_states)
+    get_activations_v3(outputs.hidden_states, use_KNN=args.KNN_neighbor_num is not None)
 
     # 首次forward (style forward)
     with torch.no_grad():
@@ -752,6 +801,8 @@ elif args.generate_method == 'v4':
     generate_method = my_generate_v4
 
 print(f"使用{args.generate_method}方法生成")
+if args.KNN_neighbor_num is not None:
+    print(f"使用KNN计算steering vector, 邻居数量: {args.KNN_neighbor_num}")
 
 
 tik = time.time()
